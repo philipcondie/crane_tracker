@@ -1,9 +1,9 @@
 import pytest
 
-from app.core.exceptions import ResourceNotFoundError, InvalidCoordinateError
+from app.core.exceptions import InvalidCoordinateError, ResourceNotFoundError
 from app.models.base import generate_uuid7
 from app.schemas.base import CraneCreate, CraneStatus
-from app.services.cranes import create_crane, delete_crane, get_crane, get_cranes
+from app.services.crane import create_crane, delete_crane, get_crane, get_cranes
 
 
 def test_create_crane_valid(session):
@@ -86,7 +86,7 @@ def test_get_cranes_empty_list(session):
         lat=10, lng=10, project_name="crane_1", status=CraneStatus.ACTIVE
     )
 
-    crane_1 = create_crane(session, crane_1_input)
+    create_crane(session, crane_1_input)
 
     crane_list = get_cranes(session=session, north=0, south=-10, east=0, west=-10)
     assert len(crane_list) == 0
