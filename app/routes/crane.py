@@ -5,12 +5,12 @@ from fastapi import APIRouter, HTTPException, Query, status
 import app.services.crane as crane_service
 from app.core.dependencies import SessionDep
 from app.core.exceptions import InvalidCoordinateError, ResourceNotFoundError
-from app.schemas.base import CraneCreate, CraneDetail
+from app.schemas.base import CraneCreate, CraneDetail, CraneSummary
 
 crane_router = APIRouter(prefix="/cranes")
 
 
-@crane_router.post("", response_model=CraneDetail, status_code=status.HTTP_201_CREATED)
+@crane_router.post("", response_model=CraneSummary, status_code=status.HTTP_201_CREATED)
 def create_crane(session: SessionDep, crane_input: CraneCreate):
     crane = crane_service.create_crane(session=session, input=crane_input)
     session.commit()
@@ -26,7 +26,7 @@ def get_crane(session: SessionDep, crane_id: uuid.UUID):
     return crane
 
 
-@crane_router.get("", response_model=list[CraneDetail])
+@crane_router.get("", response_model=list[CraneSummary])
 def get_cranes(
     session: SessionDep,
     north: float = Query(ge=-90, le=90),

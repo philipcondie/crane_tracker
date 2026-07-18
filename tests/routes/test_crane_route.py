@@ -5,7 +5,7 @@ def test_create_crane_route(client):
         json={
             "lat": 10,
             "lng": 20,
-            "project_name": "test_project",
+            "projectName": "test_project",
             "status": "active",
         },
     )
@@ -17,7 +17,7 @@ def test_create_crane_route(client):
     assert data["id"] is not None
     assert data["lat"] == 10
     assert data["lng"] == 20
-    assert data["project_name"] == "test_project"
+    assert data["projectName"] == "test_project"
     assert data["status"] == "active"
 
 
@@ -28,7 +28,7 @@ def test_get_crane_route(client):
         json={
             "lat": 10,
             "lng": 20,
-            "project_name": "test_project",
+            "projectName": "test_project",
             "status": "active",
         },
     )
@@ -48,7 +48,7 @@ def test_get_cranes_route_filters_by_bounds(client):
         json={
             "lat": 5,
             "lng": 5,
-            "project_name": "inside",
+            "projectName": "inside",
             "status": "active",
         },
     )
@@ -58,7 +58,7 @@ def test_get_cranes_route_filters_by_bounds(client):
         json={
             "lat": 50,
             "lng": 50,
-            "project_name": "inside",
+            "projectName": "inside",
             "status": "active",
         },
     )
@@ -69,7 +69,7 @@ def test_get_cranes_route_filters_by_bounds(client):
 
     data = response.json()
     assert len(data) == 1
-    assert data[0]["project_name"] == "inside"
+    assert data[0]["projectName"] == "inside"
 
 
 def test_get_crane_route_returns_404_for_missing_crane(client):

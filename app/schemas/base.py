@@ -3,6 +3,7 @@ from datetime import datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.alias_generators import to_camel
 
 
 class CraneStatus(StrEnum):
@@ -10,15 +11,20 @@ class CraneStatus(StrEnum):
     INACTIVE = "inactive"
 
 
-class CraneCreate(BaseModel):
+class BaseApiSchema(BaseModel):
+    model_config = ConfigDict(
+        from_attributes=True, populate_by_name=True, alias_generator=to_camel
+    )
+
+
+class CraneCreate(BaseApiSchema):
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
     project_name: str | None = None
     status: CraneStatus
 
 
-class CraneSummary(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+class CraneSummary(BaseApiSchema):
     id: uuid.UUID
     lat: float
     lng: float
@@ -32,5 +38,5 @@ class CraneSummary(BaseModel):
 
 
 class CraneDetail(CraneSummary):
-    imgs: list[str] = [] # placeholder until later tables are added
-    links: list[str] = [] # placeholder until later tables are added
+    imgs: list[str] = []  # placeholder until later tables are added
+    links: list[str] = []  # placeholder until later tables are added

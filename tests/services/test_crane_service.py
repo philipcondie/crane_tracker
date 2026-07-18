@@ -22,7 +22,6 @@ def test_create_crane_valid(session):
     assert crane.neighborhood == None
 
 
-
 def test_get_crane_valid(session):
     crane_input = CraneCreate(
         lat=0, lng=0, project_name="test_project", status=CraneStatus.ACTIVE
