@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     database_url: str
     test_database_url: str
     environment: str
+    cors_origins: list[str]
 
 
 @lru_cache
