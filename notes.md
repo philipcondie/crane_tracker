@@ -21,6 +21,6 @@ X set up fastapi
 X set up crud points
 X set up bounding box read
 X write tests
-set up logging
+X set up logging
 wire up to frontend
 check how to prevent duplicates
