@@ -1,8 +1,8 @@
-"""create_crane_table
+"""Initial crane table
 
-Revision ID: e2f810e08222
+Revision ID: dbadab8c6ad0
 Revises: 
-Create Date: 2026-07-15 17:33:40.294616
+Create Date: 2026-07-18 11:28:04.235644
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'e2f810e08222'
+revision: str = 'dbadab8c6ad0'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -27,7 +27,9 @@ def upgrade() -> None:
     sa.Column('lng', sa.Float(), nullable=False),
     sa.Column('project_name', sa.String(length=255), nullable=True),
     sa.Column('status', sa.Text(), nullable=False),
-    sa.Column('created_at', sa.DateTime(), server_default=sa.text('now()'), nullable=False),
+    sa.Column('city', sa.Text(), nullable=True),
+    sa.Column('neighborhood', sa.Text(), nullable=True),
+    sa.Column('added_at', sa.DateTime(), server_default=sa.text('now()'), nullable=False),
     sa.Column('updated_at', sa.DateTime(), server_default=sa.text('now()'), nullable=False),
     sa.CheckConstraint('lat >= -90 AND lat <= 90', name='ck_crane_lat_range'),
     sa.CheckConstraint('lng >= -180 AND lng <= 180', name='ck_crane_lng_range'),

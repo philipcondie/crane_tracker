@@ -18,6 +18,9 @@ def test_create_crane_valid(session):
     assert crane.lng == 0
     assert crane.project_name == "test_project"
     assert crane.status == CraneStatus.ACTIVE
+    assert crane.city == None
+    assert crane.neighborhood == None
+
 
 
 def test_get_crane_valid(session):

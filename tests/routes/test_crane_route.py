@@ -39,6 +39,7 @@ def test_get_crane_route(client):
 
     assert get_response.status_code == 200
     assert get_response.json()["id"] == crane_id
+    assert get_response.json().get("city") is None
 
 
 def test_get_cranes_route_filters_by_bounds(client):

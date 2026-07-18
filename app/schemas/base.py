@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -16,10 +17,20 @@ class CraneCreate(BaseModel):
     status: CraneStatus
 
 
-class CraneRead(BaseModel):
+class CraneSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
     lat: float
     lng: float
     project_name: str | None
     status: CraneStatus
+    city: str | None
+    neighborhood: str | None
+    photos: int = 0  # placeholder value until photos is added in v1
+    contribs: int = 0  # placeholder value until contribs is added in v1
+    added_at: datetime
+
+
+class CraneDetail(CraneSummary):
+    imgs: list[str] = [] # placeholder until later tables are added
+    links: list[str] = [] # placeholder until later tables are added
