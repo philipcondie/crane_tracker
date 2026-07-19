@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, Float, String, Text, Uuid, func
+from sqlalchemy import CheckConstraint, Float, String, Text, Uuid, func, Index
+from geoalchemy2 import Geometry, WKBElement
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from uuid_utils import uuid7
 
@@ -22,6 +23,7 @@ class Crane(Base):
     )
     lat: Mapped[float] = mapped_column(Float)
     lng: Mapped[float] = mapped_column(Float)
+    location: Mapped[WKBElement] = mapped_column(Geometry(geometry_type="POINT", srid=4326, spatial_index=False))
     project_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(Text, default="active")
     city: Mapped[str] = mapped_column(Text, nullable=True)
@@ -34,4 +36,5 @@ class Crane(Base):
     __table_args__ = (
         CheckConstraint("lat >= -90 AND lat <= 90", name="ck_crane_lat_range"),
         CheckConstraint("lng >= -180 AND lng <= 180", name="ck_crane_lng_range"),
+        Index("idx_cranes_location", "location", postgresql_using="gist")
     )

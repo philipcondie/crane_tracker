@@ -5,8 +5,31 @@ from sqlalchemy import pool
 
 from alembic import context
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.models.base import Base
+
+
+def resolve_database_url(settings: Settings) -> str:
+    """Pick the migration target database based on the environment.
+
+    ``ENVIRONMENT=test`` migrates the test database; every other recognized
+    environment migrates the primary one. Unknown values raise rather than
+    silently defaulting, so a typo cannot point DDL at the wrong database.
+    """
+    if settings.environment == "test":
+        if not settings.test_database_url:
+            raise ValueError(
+                "ENVIRONMENT=test requires TEST_DATABASE_URL to be set."
+            )
+        return settings.test_database_url
+
+    if settings.environment not in ("dev", "development", "staging", "production"):
+        raise ValueError(
+            f"Unknown ENVIRONMENT {settings.environment!r}; expected one of "
+            "'dev', 'development', 'staging', 'production', 'test'."
+        )
+
+    return settings.database_url
 
 
 # this is the Alembic Config object, which provides
@@ -16,7 +39,7 @@ settings = get_settings()
 
 config.set_main_option(
     "sqlalchemy.url",
-    settings.database_url,
+    resolve_database_url(settings),
 )
 
 # Interpret the config file for Python logging.
@@ -48,7 +71,7 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = get_settings().database_url
+    url = resolve_database_url(get_settings())
     context.configure(
         url=url,
         target_metadata=target_metadata,

@@ -1,7 +1,8 @@
 import logging
 import uuid
 from collections.abc import Sequence
-
+from geoalchemy2 import WKTElement
+from geoalchemy2.functions import ST_MakeEnvelope
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -13,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 def create_crane(session: Session, input: CraneCreate) -> Crane:
-    crane = Crane(**input.model_dump())
+    crane = Crane(**input.model_dump(), location=WKTElement(f"POINT({input.lng} {input.lat})", srid=4326))
 
     session.add(crane)
     session.flush()
@@ -87,9 +88,11 @@ def get_cranes(
             extra={"reason": "invalid lng", "east": str(east), "west": str(west)},
         )
         raise InvalidCoordinateError("East must be > West")
+    
+    bbox = ST_MakeEnvelope(west, south, east, north, 4326)
 
     query = select(Crane).where(
-        Crane.lat <= north, Crane.lat >= south, Crane.lng <= east, Crane.lng >= west
+        Crane.location.intersects(bbox)
     )
     rows = session.execute(query)
     cranes = rows.scalars().all()
