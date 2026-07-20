@@ -75,13 +75,59 @@ def test_get_cranes_valid(session):
     crane_2 = create_crane(session, crane_2_input)
     crane_3 = create_crane(session, crane_3_input)
 
-    crane_list = get_cranes(session=session, north=10, south=0, east=10, west=0)
-    assert len(crane_list) == 2
-    id_list = [crane.id for crane in crane_list]
+    crane_result = get_cranes(session=session, north=10, south=0, east=10, west=0)
+    assert len(crane_result.cranes) == 2
+    id_list = [crane.id for crane in crane_result.cranes]
     assert crane_1.id in id_list
     assert crane_2.id in id_list
     assert crane_3.id not in id_list
+    assert crane_result.truncated is False
 
+
+def test_get_cranes_at_limit(session):
+    crane_1_input = CraneCreate(
+        lat=10, lng=10, project_name="crane_1", status=CraneStatus.ACTIVE
+    )
+
+    crane_2_input = CraneCreate(
+        lat=2, lng=7, project_name="crane_2", status=CraneStatus.ACTIVE
+    )
+
+    crane_1 = create_crane(session, crane_1_input)
+    crane_2 = create_crane(session, crane_2_input)
+    crane_result = get_cranes(session=session, north=10, south=0, east=10, west=0, limit= 2)
+
+    crane_result = get_cranes(session=session, north=10, south=0, east=10, west=0)
+    assert len(crane_result.cranes) == 2
+    id_list = [crane.id for crane in crane_result.cranes]
+    assert crane_1.id in id_list
+    assert crane_2.id in id_list
+    assert crane_result.truncated is False
+
+def test_get_cranes_above_limit(session):
+    crane_1_input = CraneCreate(
+        lat=10, lng=10, project_name="crane_1", status=CraneStatus.ACTIVE
+    )
+
+    crane_2_input = CraneCreate(
+        lat=2, lng=7, project_name="crane_2", status=CraneStatus.ACTIVE
+    )
+
+    crane_3_input = CraneCreate(
+        lat=4, lng=4, project_name="crane_3", status=CraneStatus.ACTIVE
+    )
+
+    crane_1 = create_crane(session, crane_1_input)
+    crane_2 = create_crane(session, crane_2_input)
+    crane_3 = create_crane(session, crane_3_input)
+
+    crane_result = get_cranes(session=session, north=10, south=0, east=10, west=0, limit=2)
+    assert len(crane_result.cranes) == 2
+    id_list = [crane.id for crane in crane_result.cranes]
+    assert crane_1.id in id_list
+    assert crane_2.id in id_list
+    assert crane_3.id not in id_list
+    assert crane_result.truncated is True
 
 def test_get_cranes_empty_list(session):
     crane_1_input = CraneCreate(
@@ -90,8 +136,8 @@ def test_get_cranes_empty_list(session):
 
     create_crane(session, crane_1_input)
 
-    crane_list = get_cranes(session=session, north=0, south=-10, east=0, west=-10)
-    assert len(crane_list) == 0
+    crane_result = get_cranes(session=session, north=0, south=-10, east=0, west=-10)
+    assert len(crane_result.cranes) == 0
 
 
 @pytest.mark.parametrize(

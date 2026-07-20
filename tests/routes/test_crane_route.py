@@ -68,8 +68,10 @@ def test_get_cranes_route_filters_by_bounds(client):
     assert response.status_code == 200
 
     data = response.json()
-    assert len(data) == 1
-    assert data[0]["projectName"] == "inside"
+    cranes = data["cranes"]
+    assert len(cranes) == 1
+    assert cranes[0]["projectName"] == "inside"
+    assert data["truncated"] is False
 
 
 def test_get_crane_route_returns_404_for_missing_crane(client):

@@ -1,7 +1,6 @@
 import uuid
 from datetime import datetime
 from enum import StrEnum
-
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
@@ -40,3 +39,8 @@ class CraneSummary(BaseApiSchema):
 class CraneDetail(CraneSummary):
     imgs: list[str] = []  # placeholder until later tables are added
     links: list[str] = []  # placeholder until later tables are added
+
+
+class CraneListResponse(BaseApiSchema):
+    cranes: list[CraneSummary]
+    truncated: bool

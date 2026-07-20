@@ -1,6 +1,6 @@
 import logging
 import uuid
-from collections.abc import Sequence
+from typing import NamedTuple, Sequence
 
 from geoalchemy2 import WKTElement
 from geoalchemy2.functions import ST_MakeEnvelope
@@ -9,10 +9,15 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import InvalidCoordinateError, ResourceNotFoundError
 from app.models.base import Crane
-from app.schemas.base import CraneCreate
+from app.schemas.base import CraneCreate, CraneSummary
 
 logger = logging.getLogger(__name__)
 
+CRANE_LIST_LIMIT = 5000
+
+class CraneListResult(NamedTuple):
+    cranes: Sequence[Crane]
+    truncated: bool
 
 def create_crane(session: Session, input: CraneCreate) -> Crane:
     crane = Crane(
@@ -61,8 +66,8 @@ def delete_crane(session: Session, id: uuid.UUID) -> None:
 
 
 def get_cranes(
-    session: Session, north: float, south: float, east: float, west: float
-) -> Sequence[Crane]:
+    session: Session, north: float, south: float, east: float, west: float, limit: int = CRANE_LIST_LIMIT
+) -> CraneListResult:
     if north > 90 or north < -90 or south > 90 or south < -90:
         logger.warning(
             "crane_list_get_failed",
@@ -95,9 +100,17 @@ def get_cranes(
 
     bbox = ST_MakeEnvelope(west, south, east, north, 4326)
 
-    query = select(Crane).where(Crane.location.intersects(bbox))
-    rows = session.execute(query)
-    cranes = rows.scalars().all()
+    query = (
+        select(Crane)
+        .where(Crane.location.intersects(bbox))
+        .order_by(Crane.added_at.desc())
+        .limit(limit + 1)
+    )
+    rows = session.execute(query).scalars().all()
+    truncated = len(rows) > limit
 
-    logger.info("resume_list_get_succeeded", extra={"crane_count": str(len(cranes))})
-    return cranes
+    logger.info(
+        "resume_list_get_succeeded",
+        extra={"crane_count": str(len(rows)), "truncated": truncated},
+    )
+    return CraneListResult(cranes=rows[:limit], truncated=truncated)
