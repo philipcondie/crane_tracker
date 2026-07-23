@@ -1,6 +1,7 @@
 import logging
 import uuid
-from typing import NamedTuple, Sequence
+from collections.abc import Sequence
+from typing import NamedTuple
 
 from geoalchemy2 import WKTElement
 from geoalchemy2.functions import ST_MakeEnvelope
@@ -9,19 +10,25 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import InvalidCoordinateError, ResourceNotFoundError
 from app.models.base import Crane
-from app.schemas.base import CraneCreate, CraneSummary
+from app.schemas.base import CraneCreate
+from app.services.geocode import reverse_geocode
 
 logger = logging.getLogger(__name__)
 
 CRANE_LIST_LIMIT = 5000
 
+
 class CraneListResult(NamedTuple):
     cranes: Sequence[Crane]
     truncated: bool
 
+
 def create_crane(session: Session, input: CraneCreate) -> Crane:
+    geocode_data = reverse_geocode(lat=input.lat, lng=input.lng)
     crane = Crane(
         **input.model_dump(),
+        city=geocode_data.city,
+        neighborhood=geocode_data.neighborhood,
         location=WKTElement(f"POINT({input.lng} {input.lat})", srid=4326),
     )
 
@@ -66,7 +73,12 @@ def delete_crane(session: Session, id: uuid.UUID) -> None:
 
 
 def get_cranes(
-    session: Session, north: float, south: float, east: float, west: float, limit: int = CRANE_LIST_LIMIT
+    session: Session,
+    north: float,
+    south: float,
+    east: float,
+    west: float,
+    limit: int = CRANE_LIST_LIMIT,
 ) -> CraneListResult:
     if north > 90 or north < -90 or south > 90 or south < -90:
         logger.warning(

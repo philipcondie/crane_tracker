@@ -4,27 +4,33 @@ from app.core.exceptions import InvalidCoordinateError, ResourceNotFoundError
 from app.models.base import generate_uuid7
 from app.schemas.base import CraneCreate, CraneStatus
 from app.services.crane import create_crane, delete_crane, get_crane, get_cranes
+from tests.utils.constants import SF_TEST_LAT, SF_TEST_LNG
 
 
 def test_create_crane_valid(session):
-
     crane_input = CraneCreate(
-        lat=0, lng=0, project_name="test_project", status=CraneStatus.ACTIVE
+        lat=SF_TEST_LAT,
+        lng=SF_TEST_LNG,
+        project_name="test_project",
+        status=CraneStatus.ACTIVE,
     )
     crane = create_crane(session=session, input=crane_input)
 
     assert crane.id is not None
-    assert crane.lat == 0
-    assert crane.lng == 0
+    assert crane.lat == SF_TEST_LAT
+    assert crane.lng == SF_TEST_LNG
     assert crane.project_name == "test_project"
     assert crane.status == CraneStatus.ACTIVE
-    assert crane.city is None
-    assert crane.neighborhood is None
+    assert crane.city == "San Francisco"
+    assert crane.neighborhood == "Mission Bay"
 
 
 def test_get_crane_valid(session):
     crane_input = CraneCreate(
-        lat=0, lng=0, project_name="test_project", status=CraneStatus.ACTIVE
+        lat=SF_TEST_LAT,
+        lng=SF_TEST_LNG,
+        project_name="test_project",
+        status=CraneStatus.ACTIVE,
     )
     crane_create = create_crane(session=session, input=crane_input)
 
@@ -34,6 +40,8 @@ def test_get_crane_valid(session):
     assert crane_create.lat == crane_get.lat
     assert crane_create.lng == crane_get.lng
     assert crane_create.project_name == crane_get.project_name
+    assert crane_create.city == crane_get.city
+    assert crane_create.neighborhood == crane_get.neighborhood
 
 
 def test_get_crane_invalid(session):
@@ -43,7 +51,10 @@ def test_get_crane_invalid(session):
 
 def test_delete_crane_valid(session):
     crane_input = CraneCreate(
-        lat=0, lng=0, project_name="test_project", status=CraneStatus.ACTIVE
+        lat=SF_TEST_LAT,
+        lng=SF_TEST_LNG,
+        project_name="test_project",
+        status=CraneStatus.ACTIVE,
     )
     crane_create = create_crane(session=session, input=crane_input)
 
@@ -95,7 +106,9 @@ def test_get_cranes_at_limit(session):
 
     crane_1 = create_crane(session, crane_1_input)
     crane_2 = create_crane(session, crane_2_input)
-    crane_result = get_cranes(session=session, north=10, south=0, east=10, west=0, limit= 2)
+    crane_result = get_cranes(
+        session=session, north=10, south=0, east=10, west=0, limit=2
+    )
 
     crane_result = get_cranes(session=session, north=10, south=0, east=10, west=0)
     assert len(crane_result.cranes) == 2
@@ -103,6 +116,7 @@ def test_get_cranes_at_limit(session):
     assert crane_1.id in id_list
     assert crane_2.id in id_list
     assert crane_result.truncated is False
+
 
 def test_get_cranes_above_limit(session):
     crane_1_input = CraneCreate(
@@ -121,13 +135,16 @@ def test_get_cranes_above_limit(session):
     crane_2 = create_crane(session, crane_2_input)
     crane_3 = create_crane(session, crane_3_input)
 
-    crane_result = get_cranes(session=session, north=10, south=0, east=10, west=0, limit=2)
+    crane_result = get_cranes(
+        session=session, north=10, south=0, east=10, west=0, limit=2
+    )
     assert len(crane_result.cranes) == 2
     id_list = [crane.id for crane in crane_result.cranes]
     assert crane_1.id in id_list
     assert crane_2.id in id_list
     assert crane_3.id not in id_list
     assert crane_result.truncated is True
+
 
 def test_get_cranes_empty_list(session):
     crane_1_input = CraneCreate(

@@ -1,10 +1,12 @@
-def test_create_crane_route(client):
+from tests.utils.constants import SF_TEST_LAT, SF_TEST_LNG
 
+
+def test_create_crane_route(client):
     response = client.post(
         "/cranes",
         json={
-            "lat": 10,
-            "lng": 20,
+            "lat": SF_TEST_LAT,
+            "lng": SF_TEST_LNG,
             "projectName": "test_project",
             "status": "active",
         },
@@ -15,19 +17,20 @@ def test_create_crane_route(client):
     data = response.json()
 
     assert data["id"] is not None
-    assert data["lat"] == 10
-    assert data["lng"] == 20
+    assert data["lat"] == SF_TEST_LAT
+    assert data["lng"] == SF_TEST_LNG
     assert data["projectName"] == "test_project"
     assert data["status"] == "active"
+    assert data["city"] == "San Francisco"
+    assert data["neighborhood"] == "Mission Bay"
 
 
 def test_get_crane_route(client):
-
     response = client.post(
         "/cranes",
         json={
-            "lat": 10,
-            "lng": 20,
+            "lat": SF_TEST_LAT,
+            "lng": SF_TEST_LNG,
             "projectName": "test_project",
             "status": "active",
         },
@@ -38,8 +41,10 @@ def test_get_crane_route(client):
     get_response = client.get(f"/cranes/{crane_id}")
 
     assert get_response.status_code == 200
-    assert get_response.json()["id"] == crane_id
-    assert get_response.json().get("city") is None
+    data = get_response.json()
+    assert data["id"] == crane_id
+    assert data["city"] == "San Francisco"
+    assert data["neighborhood"] == "Mission Bay"
 
 
 def test_get_cranes_route_filters_by_bounds(client):
