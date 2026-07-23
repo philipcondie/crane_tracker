@@ -8,10 +8,14 @@ from geoalchemy2.functions import ST_MakeEnvelope
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import InvalidCoordinateError, ResourceNotFoundError
+from app.core.exceptions import (
+    GeocodeRetrievalError,
+    InvalidCoordinateError,
+    ResourceNotFoundError,
+)
 from app.models.base import Crane
 from app.schemas.base import CraneCreate
-from app.services.geocode import reverse_geocode
+from app.services.geocode import GeocodeData, reverse_geocode
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +28,15 @@ class CraneListResult(NamedTuple):
 
 
 def create_crane(session: Session, input: CraneCreate) -> Crane:
-    geocode_data = reverse_geocode(lat=input.lat, lng=input.lng)
+    try:
+        geocode_data = reverse_geocode(lat=input.lat, lng=input.lng)
+    except GeocodeRetrievalError as e:
+        logger.warning(
+            "reverse_geocode_failed",
+            extra={"lat": input.lat, "lng": input.lng, "reason": str(e)},
+        )
+        geocode_data = GeocodeData(city=None, neighborhood=None)
+
     crane = Crane(
         **input.model_dump(),
         city=geocode_data.city,

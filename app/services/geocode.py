@@ -1,12 +1,18 @@
 from dataclasses import dataclass
 
 import requests
-from requests.exceptions import ConnectionError, HTTPError, JSONDecodeError, Timeout
+from requests.exceptions import (
+    ConnectionError,
+    HTTPError,
+    JSONDecodeError,
+    RequestException,
+    Timeout,
+)
 
 from app.core.exceptions import GeocodeRetrievalError
 
 GEOCODE_API_URL = "https://nominatim.openstreetmap.org/reverse?"
-TIMEOUT_SECONDS = 1
+TIMEOUT_SECONDS = 5
 
 
 @dataclass
@@ -38,7 +44,7 @@ def extract_city(address: dict) -> str | None:
     return None
 
 
-def reverse_geocode(lat: float, lng: float):
+def reverse_geocode(lat: float, lng: float) -> GeocodeData:
     query_params = {
         "format": "jsonv2",
         "addressdetails": "1",
@@ -60,8 +66,11 @@ def reverse_geocode(lat: float, lng: float):
         raise GeocodeRetrievalError(f"timeout {TIMEOUT_SECONDS} seconds")
     except ConnectionError:
         raise GeocodeRetrievalError("connection error")
-    except HTTPError:
-        raise GeocodeRetrievalError(f"bad status {resp.status_code}")
+    except HTTPError as e:
+        status_code = e.response.status_code if e.response else "unknown"
+        raise GeocodeRetrievalError(f"bad status {status_code}")
+    except RequestException as e:
+        raise GeocodeRetrievalError(f"request error {e}")
 
     try:
         if address := resp.json().get("address"):
@@ -72,7 +81,3 @@ def reverse_geocode(lat: float, lng: float):
             return GeocodeData(city=None, neighborhood=None)
     except JSONDecodeError:
         raise GeocodeRetrievalError("JSON parse")
-
-
-if __name__ == "__main__":
-    print(reverse_geocode(37.76570110012398, -122.4018229552917))
