@@ -1,7 +1,7 @@
 """initial crane table
 
 Revision ID: 69af4f84e5fc
-Revises: 
+Revises:
 Create Date: 2026-07-18 16:08:35.275296
 
 """

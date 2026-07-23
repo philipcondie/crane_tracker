@@ -12,7 +12,6 @@ class CorrelationIdFilter(logging.Filter):
 
 
 def configure_logging(level: str = "INFO") -> None:
-
     level = level.upper()
 
     valid_levels = logging.getLevelNamesMapping()
