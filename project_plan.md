@@ -25,13 +25,13 @@ Crane Tracker is a community-driven map for construction crane enthusiasts. Anyo
 | Interactive map | Leaflet.js + OpenStreetMap tiles, full-screen map view | ✅ | |
 | Color-coded pins | Green = Active, Gray = Gone | ✅ | |
 | Pin crane | Tap map to drop a pin, drag to adjust location | ✅ | |
-| Photo upload | Up to 3 photos per crane, stored in Supabase Storage | ✅ | |
+| Photo upload | Up to 3 photos per crane (storage backend TBD — see Photo Storage) | ✅ | |
 | Crane metadata | Project name, crane type (dropdown), optional notes | ✅ | |
 | Article links | Up to 3 URLs linking to news or project pages | ✅ | |
 | Active / Gone status | Community "Report as gone" button, flips after threshold | ✅ | |
 | Detail panel | Slide-in panel with photo carousel, links, metadata | ✅ | |
 | Success feedback | Toast notification on successful submission | ✅ | |
-| Rate limiting | IP-based submission throttle via Supabase Edge Function | ✅ | |
+| Rate limiting | IP-based submission throttle enforced in the backend API | ✅ | |
 | Image compression | Client-side compression before upload (browser-image-compression) | ✅ | |
 | Activity feed | Reverse-chronological feed of newly added cranes with infinite scroll | | ✅ |
 | Stats overview | Standalone /stats page with crane counts, hotspots, and city leaderboard | | ✅ |
@@ -65,7 +65,7 @@ Crane Tracker is a community-driven map for construction crane enthusiasts. Anyo
 2. A draggable temporary pin drops at that location with tooltip: *"Adding crane here — drag to adjust"*
 3. Submission panel slides in from the right (desktop) or bottom sheet on mobile
 4. User fills in photos + optional metadata and hits Submit
-5. Photos upload to Supabase Storage → URLs saved to Postgres → pin goes live
+5. Photos upload to the configured storage backend → URLs saved to Postgres → pin goes live
 6. Panel closes, map animates to new pin, success toast appears
 
 ### Mobile Behavior
@@ -99,7 +99,7 @@ Crane Tracker is a community-driven map for construction crane enthusiasts. Anyo
 |---|---|---|
 | `id` | `uuid` PK | |
 | `crane_id` | `uuid` FK → cranes | |
-| `storage_url` | `text` | Full public URL from Supabase Storage |
+| `storage_url` | `text` | Full public URL from the photo storage backend (TBD) |
 | `uploaded_at` | `timestamptz` | |
 
 ### `crane_links`
@@ -120,7 +120,7 @@ Crane Tracker is a community-driven map for construction crane enthusiasts. Anyo
 | `reporter_ip` | `text` | Hashed IP of reporter |
 | `created_at` | `timestamptz` | |
 
-> When `gone_reports` count for a crane reaches 3, an Edge Function flips `cranes.status = 'gone'` and sets `updated_at`.
+> When `gone_reports` count for a crane reaches 3, the backend flips `cranes.status = 'gone'` and sets `updated_at`.
 
 ---
 
@@ -131,52 +131,75 @@ Crane Tracker is a community-driven map for construction crane enthusiasts. Anyo
 | | |
 |---|---|
 | **Frontend** | React + Leaflet.js — hosted on Vercel (free) |
-| **Database** | Supabase Postgres (managed, free tier: 500 MB) |
-| **REST API** | Supabase PostgREST — auto-generated, no custom backend needed |
-| **File storage** | Supabase Storage (free tier: 1 GB) — public bucket |
-| **Custom logic** | Supabase Edge Functions (Deno/TypeScript) for gone-report threshold and rate limiting |
+| **Backend API** | Self-hosted FastAPI (Python), running on a DigitalOcean droplet |
+| **Database** | PostgreSQL with PostGIS, self-managed via Docker Compose on the droplet |
+| **File storage** | TBD — see Photo Storage section |
+| **Reverse proxy / TLS** | Caddy (automatic HTTPS via Let's Encrypt) |
+| **Custom logic** | Implemented directly in the FastAPI backend (gone-report threshold, rate limiting) |
 | **Map tiles** | OpenStreetMap via Leaflet.js (free, no API key) |
+
+See `AGENTS.md` for the full deployment reference (Docker Compose topology, CI/CD, Dockerfile patterns).
 
 ### Request Flow
 
 ```
 User's Browser (React)
         │
-        ├──[load cranes]────► Supabase REST API ──► Postgres
+        ├──[load cranes]────► FastAPI (GET /cranes) ──► Postgres
         │
-        ├──[upload photo]───► Supabase Storage
+        ├──[upload photo]───► FastAPI ──► photo storage backend (TBD)
         │
-        ├──[submit crane]───► Supabase REST API ──► Postgres
+        ├──[submit crane]───► FastAPI (POST /cranes) ──► Postgres
         │                     (inserts crane + photo URLs + links)
         │
-        └──[report gone]────► Supabase Edge Function
+        └──[report gone]────► FastAPI (POST /cranes/{id}/gone-reports)
+                              → inserts report
                               → checks report count
                               → updates status if threshold met
+
+All requests are proxied through Caddy, which terminates TLS.
 ```
 
-### Row-Level Security (RLS) Policies
+### Access Control
 
-| Operation | Who |
+Access control is enforced in the FastAPI backend rather than at the database layer.
+For the MVP the model is intentionally simple:
+
+- **Reads** (cranes, photos, links) are public.
+- **Submissions** (create crane, report gone) are open and anonymous.
+- **Status changes and any privileged mutations** are performed only by backend logic —
+  clients cannot directly set a crane's status.
+
+A more formal authorization scheme (roles, admin endpoints) can be added later if needed.
+
+### Backend Logic
+
+Behavior that Supabase Edge Functions would have covered now lives in the backend as
+route handlers and services:
+
+| Responsibility | Detail |
 |---|---|
-| `SELECT` | Public — anyone can read cranes, photos, links |
-| `INSERT` | Public — anonymous submissions allowed |
-| `UPDATE` / `DELETE` | `service_role` only — Edge Functions mutate status |
-
-### Edge Functions
-
-| Function | Responsibility |
-|---|---|
-| `handle-gone-report` | Receives `crane_id` + hashed IP. Inserts to `gone_reports`. Checks count — if ≥ 3, updates `cranes.status = 'gone'`. |
-| `rate-limit-submission` | Checks submission frequency by hashed IP. Rejects if > 5 submissions per hour. |
-| `process-photo` *(optional)* | Resize/compress image server-side before storing. Useful if client-side compression is insufficient. |
+| Gone-report handling | Receives `crane_id` + hashed IP, inserts to `gone_reports`, and flips `cranes.status = 'gone'` once the count reaches 3. |
+| Submission rate limiting | Rejects submissions exceeding the per-IP hourly limit (see Spam & Abuse Mitigation). |
+| Photo processing *(optional)* | Optional server-side resize/compress before storing, if client-side compression proves insufficient. |
 
 ---
 
 ## Photo Storage
 
-### Bucket Structure
+> **Decision pending.** With Supabase Storage removed, the photo storage backend is not
+> yet chosen. Whatever is selected must expose a stable public URL per photo to save in
+> `crane_photos.storage_url`. Candidate approaches:
+>
+> - **S3-compatible object storage** (Cloudflare R2, DigitalOcean Spaces, AWS S3) — keeps
+>   the droplet stateless; the backend uploads and returns the public URL. R2 has a
+>   generous free tier and no egress fees.
+> - **Local disk on the droplet** — a mounted volume served by the app or Caddy. Simplest
+>   to stand up, but couples photo data to the droplet and complicates backups/scaling.
 
-A single public Supabase Storage bucket named `crane-photos`. Files organized by crane ID:
+### File Organization
+
+Regardless of backend, organize files by crane ID:
 
 ```
 crane-photos/
@@ -191,19 +214,20 @@ crane-photos/
 
 1. User selects file(s) on device (up to 3, max 5 MB each)
 2. Client-side compression via `browser-image-compression` (target: < 800 KB per photo)
-3. Upload to Supabase Storage, receive storage path
-4. Construct public URL from path
+3. Upload to the storage backend (via the FastAPI API), receive storage path
+4. Construct/return the public URL for that path
 5. Save URL to `crane_photos` table alongside crane record
 
-### Storage Limits
+### Storage Sizing
 
-At 500 KB average per compressed photo, the 1 GB free tier supports roughly 2,000 photos — a comfortable runway for early growth. Supabase Storage beyond the free tier costs approximately $0.021/GB.
+At ~500 KB average per compressed photo, 1 GB holds roughly 2,000 photos — a comfortable
+runway for early growth. Exact cost depends on the backend chosen above.
 
 ---
 
 ## Spam & Abuse Mitigation
 
-Given fully anonymous submissions, lightweight protections are applied at the Edge Function layer:
+Given fully anonymous submissions, lightweight protections are applied in the backend API:
 
 | Mechanism | Detail |
 |---|---|
@@ -260,15 +284,17 @@ Given fully anonymous submissions, lightweight protections are applied at the Ed
 | Service | What it covers | Free tier | Est. cost at scale |
 |---|---|---|---|
 | Vercel | Frontend hosting, CDN | Free (Hobby plan) | ~$0/mo for low traffic |
-| Supabase Postgres | Database | Free (500 MB) | ~$25/mo (Pro) when needed |
-| Supabase Storage | Photo storage | Free (1 GB) | $0.021/GB overage |
-| Supabase Edge Functions | Rate limiting, gone logic | Free (500K invocations) | Negligible |
+| DigitalOcean droplet | Backend API, Postgres, Caddy | — | ~$6–12/mo (basic droplet) |
+| Photo storage | Photo storage (backend TBD) | Depends on choice | e.g. Cloudflare R2 free tier, or droplet disk |
+| Custom logic | Rate limiting, gone logic | Runs in the backend (no extra service) | Included in droplet cost |
 | OpenStreetMap | Map tiles | Free | Free |
 | Domain (.com) | Custom domain | — | ~$12/yr |
 
-**Total estimated cost at MVP scale: ~$1/month** (domain amortized).
+**Total estimated cost at MVP scale: ~$6–12/month** (droplet) + domain amortized.
 
-> ⚠️ Supabase pauses inactive free-tier projects after 1 week of inactivity. Mitigate with a free cron ping service (e.g. [cron-job.org](https://cron-job.org)) until traffic is self-sustaining.
+> The self-hosted droplet runs continuously, so there is no free-tier auto-pause to work
+> around. The trade-off vs. the previous managed setup is a fixed monthly droplet cost in
+> exchange for full control and no cold-start/pause behavior.
 
 ---
 
@@ -305,7 +331,7 @@ The filter updates the feed in place without a page reload. No crane-type filter
 ### Infinite Scroll
 
 - Initial load fetches 20 entries ordered by `cranes.created_at DESC`
-- As the user scrolls to the bottom, the next 20 are fetched (`offset`-based pagination against the Supabase REST API)
+- As the user scrolls to the bottom, the next 20 are fetched (`offset`-based pagination against the backend API)
 - A subtle loading spinner appears at the bottom during fetch
 - When all entries are exhausted, a "You've seen them all" end-of-feed message is shown
 
@@ -395,7 +421,7 @@ A list of the top 5 geographic clusters — areas with the highest density of cr
 - Active crane count in the cluster
 - A "View on map" link that flies the map to that location
 
-**How clusters are computed:** Hotspots are pre-computed rather than calculated on every page load. A scheduled job (Supabase cron via `pg_cron`, or an external cron ping) runs nightly and writes results to a `stats_cache` table. The `/stats` page reads from this cache rather than running expensive aggregation queries live.
+**How clusters are computed:** Hotspots are pre-computed rather than calculated on every page load. A scheduled job runs nightly and writes results to a `stats_cache` table; the `/stats` page reads from this cache rather than running expensive aggregation queries live. The scheduling mechanism is TBD — options include an OS-level cron on the droplet invoking a management command, a dedicated scheduled container, or Postgres `pg_cron`.
 
 ### Data Model Addition
 
@@ -428,7 +454,7 @@ Stats are computed nightly via a cron job. This means:
 - The "Last updated" timestamp on the page sets expectations
 - No live aggregation queries hit Postgres during page load
 
-If real-time stats become desirable later, Supabase's Postgres functions could be called on demand with results cached in memory for a short TTL.
+If real-time stats become desirable later, the backend could compute them on demand with results cached in memory for a short TTL.
 
 ### Component Additions
 

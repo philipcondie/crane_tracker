@@ -2,7 +2,17 @@ import uuid
 from datetime import datetime
 
 from geoalchemy2 import Geometry, WKBElement
-from sqlalchemy import CheckConstraint, Float, Index, String, Text, Uuid, func
+from sqlalchemy import (
+    CheckConstraint,
+    Float,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+    func,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from uuid_utils import uuid7
 
@@ -28,8 +38,8 @@ class Crane(Base):
     )
     project_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(Text, default="active")
-    city: Mapped[str] = mapped_column(Text, nullable=True)
-    neighborhood: Mapped[str] = mapped_column(Text, nullable=True)
+    city: Mapped[str | None] = mapped_column(Text, nullable=True)
+    neighborhood: Mapped[str | None] = mapped_column(Text, nullable=True)
     added_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), onupdate=func.now()
@@ -39,4 +49,21 @@ class Crane(Base):
         CheckConstraint("lat >= -90 AND lat <= 90", name="ck_crane_lat_range"),
         CheckConstraint("lng >= -180 AND lng <= 180", name="ck_crane_lng_range"),
         Index("idx_cranes_location", "location", postgresql_using="gist"),
+    )
+
+
+class GoneReport(Base):
+    __tablename__ = "gone_report"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, primary_key=True, default=generate_uuid7
+    )
+    crane_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("crane.id", ondelete="CASCADE")
+    )
+    reporter_ip_hash: Mapped[str] = mapped_column(String)
+    added_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("crane_id", "reporter_ip_hash", name="crane_reporter"),
     )

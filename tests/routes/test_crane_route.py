@@ -1,4 +1,4 @@
-from tests.utils.constants import SF_TEST_LAT, SF_TEST_LNG
+from tests.utils.constants import SF_TEST_LAT, SF_TEST_LNG, TEST_IP_ADDR
 
 
 def test_create_crane_route(client):
@@ -8,7 +8,6 @@ def test_create_crane_route(client):
             "lat": SF_TEST_LAT,
             "lng": SF_TEST_LNG,
             "projectName": "test_project",
-            "status": "active",
         },
     )
 
@@ -32,7 +31,6 @@ def test_get_crane_route(client):
             "lat": SF_TEST_LAT,
             "lng": SF_TEST_LNG,
             "projectName": "test_project",
-            "status": "active",
         },
     )
 
@@ -54,7 +52,6 @@ def test_get_cranes_route_filters_by_bounds(client):
             "lat": 5,
             "lng": 5,
             "projectName": "inside",
-            "status": "active",
         },
     )
 
@@ -64,7 +61,6 @@ def test_get_cranes_route_filters_by_bounds(client):
             "lat": 50,
             "lng": 50,
             "projectName": "inside",
-            "status": "active",
         },
     )
 
@@ -95,3 +91,64 @@ def test_get_cranes_route_rejects_reversed_bounds(client):
     response = client.get("/cranes?north=0&south=10&east=10&west=0")
 
     assert response.status_code == 400
+
+
+def test_report_crane_as_gone_route_returns_409_for_duplicate(client):
+    response = client.post(
+        "/cranes",
+        json={
+            "lat": SF_TEST_LAT,
+            "lng": SF_TEST_LNG,
+            "projectName": "test_project",
+        },
+    )
+
+    crane_id = response.json()["id"]
+
+    report_response = client.post(
+        f"/cranes/{crane_id}/report", headers={"X-Forwarded-For": TEST_IP_ADDR}
+    )
+    report_response = client.post(
+        f"/cranes/{crane_id}/report", headers={"X-Forwarded-For": TEST_IP_ADDR}
+    )
+
+    assert report_response.status_code == 409
+
+
+def test_report_crane_as_gone_route_returns_404_for_missing_crane(client):
+    response = client.post(
+        "/cranes/019f6854-fcc3-7831-b1ee-d642e12732cc/report",
+        headers={"X-Forwarded-For": TEST_IP_ADDR},
+    )
+
+    assert response.status_code == 404
+
+
+def test_report_crane_as_gone_succeeds(client):
+    response = client.post(
+        "/cranes",
+        json={
+            "lat": SF_TEST_LAT,
+            "lng": SF_TEST_LNG,
+            "projectName": "test_project",
+        },
+    )
+
+    crane_id = response.json()["id"]
+
+    ip_addresses = [
+        "127.0.0.1",
+        "192.168.1.10",
+        "203.0.113.42",
+        "2001:db8::1",
+    ]
+
+    for ip_address in ip_addresses:
+        report_response = client.post(
+            f"/cranes/{crane_id}/report", headers={"X-Forwarded-For": ip_address}
+        )
+        assert report_response.status_code == 200
+
+    crane_response = client.get(f"/cranes/{crane_id}")
+    data = crane_response.json()
+    assert data["status"] == "gone"

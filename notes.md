@@ -1,26 +1,16 @@
-crane functions
-    CRUD
+## Full Features to add
+- photo links
+- article links (later)
+- gone reports
+- async adding of city-neighborhood
+- stats and feed features. (post mvp)
 
-crane_photos
-    CRUD
-
-crane_links
-    CRUD
-
-gone_reports
+## Improvements
+- prevent duplicates
+- caching
+- center location on frontend to user location or other default besides hardcoded value
 
 
-PLAN
-X set up project structure
-X set up database
-    X - alembic
-    X - container
-    X - generate migration (PARTIAL X)
-    X - run migration
-X set up fastapi
-X set up crud points
-X set up bounding box read
-X write tests
-X set up logging
-wire up to frontend
-check how to prevent duplicates
+## Infrastructure to add
+- user accounts (later)
+- rate limiting

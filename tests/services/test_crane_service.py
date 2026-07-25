@@ -1,10 +1,21 @@
 import pytest
+from sqlalchemy import select
 
-from app.core.exceptions import InvalidCoordinateError, ResourceNotFoundError
-from app.models.base import generate_uuid7
+from app.core.exceptions import (
+    DuplicateGoneReportError,
+    InvalidCoordinateError,
+    ResourceNotFoundError,
+)
+from app.models.base import GoneReport, generate_uuid7
 from app.schemas.base import CraneCreate, CraneStatus
-from app.services.crane import create_crane, delete_crane, get_crane, get_cranes
-from tests.utils.constants import SF_TEST_LAT, SF_TEST_LNG
+from app.services.crane import (
+    create_crane,
+    delete_crane,
+    get_crane,
+    get_cranes,
+    report_crane_as_gone,
+)
+from tests.utils.constants import SF_TEST_LAT, SF_TEST_LNG, TEST_IP_ADDR
 
 
 def test_create_crane_valid(session):
@@ -12,7 +23,6 @@ def test_create_crane_valid(session):
         lat=SF_TEST_LAT,
         lng=SF_TEST_LNG,
         project_name="test_project",
-        status=CraneStatus.ACTIVE,
     )
     crane = create_crane(session=session, input=crane_input)
 
@@ -30,7 +40,6 @@ def test_get_crane_valid(session):
         lat=SF_TEST_LAT,
         lng=SF_TEST_LNG,
         project_name="test_project",
-        status=CraneStatus.ACTIVE,
     )
     crane_create = create_crane(session=session, input=crane_input)
 
@@ -54,7 +63,6 @@ def test_delete_crane_valid(session):
         lat=SF_TEST_LAT,
         lng=SF_TEST_LNG,
         project_name="test_project",
-        status=CraneStatus.ACTIVE,
     )
     crane_create = create_crane(session=session, input=crane_input)
 
@@ -70,17 +78,11 @@ def test_delete_crane_invalid(session):
 
 
 def test_get_cranes_valid(session):
-    crane_1_input = CraneCreate(
-        lat=10, lng=10, project_name="crane_1", status=CraneStatus.ACTIVE
-    )
+    crane_1_input = CraneCreate(lat=10, lng=10, project_name="crane_1")
 
-    crane_2_input = CraneCreate(
-        lat=2, lng=7, project_name="crane_2", status=CraneStatus.ACTIVE
-    )
+    crane_2_input = CraneCreate(lat=2, lng=7, project_name="crane_2")
 
-    crane_3_input = CraneCreate(
-        lat=10.1, lng=10.1, project_name="crane_3", status=CraneStatus.ACTIVE
-    )
+    crane_3_input = CraneCreate(lat=10.1, lng=10.1, project_name="crane_3")
 
     crane_1 = create_crane(session, crane_1_input)
     crane_2 = create_crane(session, crane_2_input)
@@ -96,13 +98,9 @@ def test_get_cranes_valid(session):
 
 
 def test_get_cranes_at_limit(session):
-    crane_1_input = CraneCreate(
-        lat=10, lng=10, project_name="crane_1", status=CraneStatus.ACTIVE
-    )
+    crane_1_input = CraneCreate(lat=10, lng=10, project_name="crane_1")
 
-    crane_2_input = CraneCreate(
-        lat=2, lng=7, project_name="crane_2", status=CraneStatus.ACTIVE
-    )
+    crane_2_input = CraneCreate(lat=2, lng=7, project_name="crane_2")
 
     crane_1 = create_crane(session, crane_1_input)
     crane_2 = create_crane(session, crane_2_input)
@@ -119,17 +117,11 @@ def test_get_cranes_at_limit(session):
 
 
 def test_get_cranes_above_limit(session):
-    crane_1_input = CraneCreate(
-        lat=10, lng=10, project_name="crane_1", status=CraneStatus.ACTIVE
-    )
+    crane_1_input = CraneCreate(lat=10, lng=10, project_name="crane_1")
 
-    crane_2_input = CraneCreate(
-        lat=2, lng=7, project_name="crane_2", status=CraneStatus.ACTIVE
-    )
+    crane_2_input = CraneCreate(lat=2, lng=7, project_name="crane_2")
 
-    crane_3_input = CraneCreate(
-        lat=4, lng=4, project_name="crane_3", status=CraneStatus.ACTIVE
-    )
+    crane_3_input = CraneCreate(lat=4, lng=4, project_name="crane_3")
 
     crane_1 = create_crane(session, crane_1_input)
     crane_2 = create_crane(session, crane_2_input)
@@ -147,9 +139,7 @@ def test_get_cranes_above_limit(session):
 
 
 def test_get_cranes_empty_list(session):
-    crane_1_input = CraneCreate(
-        lat=10, lng=10, project_name="crane_1", status=CraneStatus.ACTIVE
-    )
+    crane_1_input = CraneCreate(lat=10, lng=10, project_name="crane_1")
 
     create_crane(session, crane_1_input)
 
@@ -171,3 +161,82 @@ def test_get_cranes_empty_list(session):
 def test_get_cranes_bad_input(session, payload):
     with pytest.raises(InvalidCoordinateError):
         get_cranes(session=session, **payload)
+
+
+def test_report_crane_as_gone_invalid(session):
+    with pytest.raises(ResourceNotFoundError):
+        report_crane_as_gone(
+            session=session, crane_id=generate_uuid7(), client_ip=TEST_IP_ADDR
+        )
+
+
+def test_report_crane_as_gone_succeeds(session):
+    crane_input = CraneCreate(
+        lat=SF_TEST_LAT,
+        lng=SF_TEST_LNG,
+        project_name="test_project",
+    )
+
+    crane_create = create_crane(session=session, input=crane_input)
+
+    report_crane_as_gone(
+        session=session, crane_id=crane_create.id, client_ip=TEST_IP_ADDR
+    )
+
+
+def test_report_crane_as_gone_status_updates(session):
+    crane_input = CraneCreate(
+        lat=SF_TEST_LAT,
+        lng=SF_TEST_LNG,
+        project_name="test_project",
+    )
+
+    crane_create = create_crane(session=session, input=crane_input)
+
+    report_crane_as_gone(
+        session=session, crane_id=crane_create.id, client_ip=TEST_IP_ADDR, threshold=2
+    )
+
+    crane_get = get_crane(session=session, id=crane_create.id)
+    assert crane_get.status == "active"
+
+    report_crane_as_gone(
+        session=session,
+        crane_id=crane_create.id,
+        client_ip=TEST_IP_ADDR + "_test",
+        threshold=2,
+    )
+
+    crane_get = get_crane(session=session, id=crane_create.id)
+    assert crane_get.status == "gone"
+
+
+# repeated ip address
+def test_report_crane_as_gone_repeated_ip_address(session):
+    crane_input = CraneCreate(
+        lat=SF_TEST_LAT,
+        lng=SF_TEST_LNG,
+        project_name="test_project",
+    )
+
+    crane_create = create_crane(session=session, input=crane_input)
+
+    report_crane_as_gone(
+        session=session, crane_id=crane_create.id, client_ip=TEST_IP_ADDR, threshold=1
+    )
+
+    with pytest.raises(DuplicateGoneReportError):
+        report_crane_as_gone(
+            session=session,
+            crane_id=crane_create.id,
+            client_ip=TEST_IP_ADDR,
+            threshold=2,
+        )
+
+    crane_get = get_crane(session=session, id=crane_create.id)
+    reports = session.scalars(
+        select(GoneReport).where(GoneReport.crane_id == crane_create.id)
+    ).all()
+
+    assert crane_get.id == crane_create.id
+    assert len(reports) == 1

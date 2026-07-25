@@ -17,3 +17,10 @@ class GeocodeRetrievalError(Exception):
 
     def __init__(self, message):
         super().__init__(f"Geocode API request failed for {message}")
+
+
+class DuplicateGoneReportError(Exception):
+    """Exception for when the same ip reports the same crane as gone"""
+
+    def __init__(self):
+        super().__init__("Duplicate gone reports submitted by same IP for same crane")

@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import logging
 import uuid
 from collections.abc import Sequence
@@ -5,21 +7,31 @@ from typing import NamedTuple
 
 from geoalchemy2 import WKTElement
 from geoalchemy2.functions import ST_MakeEnvelope
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.exceptions import (
+    DuplicateGoneReportError,
     GeocodeRetrievalError,
     InvalidCoordinateError,
     ResourceNotFoundError,
 )
-from app.models.base import Crane
-from app.schemas.base import CraneCreate
+from app.models.base import Crane, GoneReport
+from app.schemas.base import CraneCreate, CraneStatus
 from app.services.geocode import GeocodeData, reverse_geocode
 
 logger = logging.getLogger(__name__)
 
+settings = get_settings()
+
 CRANE_LIST_LIMIT = 5000
+
+
+def hash_ip(ip_address: str) -> str:
+    secret_key = settings.ip_hash_salt.encode()
+    return hmac.new(secret_key, ip_address.encode(), hashlib.sha256).hexdigest()
 
 
 class CraneListResult(NamedTuple):
@@ -39,6 +51,7 @@ def create_crane(session: Session, input: CraneCreate) -> Crane:
 
     crane = Crane(
         **input.model_dump(),
+        status=CraneStatus.ACTIVE,
         city=geocode_data.city,
         neighborhood=geocode_data.neighborhood,
         location=WKTElement(f"POINT({input.lng} {input.lat})", srid=4326),
@@ -138,3 +151,57 @@ def get_cranes(
         extra={"crane_count": str(len(rows)), "truncated": truncated},
     )
     return CraneListResult(cranes=rows[:limit], truncated=truncated)
+
+
+def report_crane_as_gone(
+    session: Session,
+    crane_id: uuid.UUID,
+    client_ip: str,
+    threshold: int | None = None,
+) -> None:
+    if threshold is None:
+        threshold = get_settings().gone_report_threshold
+
+    # verify crane exists
+    query = select(Crane).where(Crane.id == crane_id).with_for_update()
+    row = session.execute(query)
+    crane = row.scalar_one_or_none()
+
+    if crane is None:
+        logger.warning(
+            "gone_report_create_failed",
+            extra={"crane_id": str(crane_id), "reason": "crane_not_found"},
+        )
+        raise ResourceNotFoundError(resource="crane", identifier=str(crane_id))
+
+    # add gone report
+    report = GoneReport(crane_id=crane_id, reporter_ip_hash=hash_ip(client_ip))
+    try:
+        with session.begin_nested():
+            session.add(report)
+            session.flush()
+    except IntegrityError as e:
+        logger.warning(
+            "gone_report_create_failed",
+            extra={"crane_id": str(crane_id), "reason": "duplicate reporter ip"},
+        )
+        raise DuplicateGoneReportError() from e
+
+    # check gone report count and update status
+    query = select(func.count(GoneReport.id)).where(GoneReport.crane_id == crane_id)
+    gone_report_count = session.scalar(query)
+
+    logger.info(
+        "gone_report_created",
+        extra={"crane_id": str(crane_id), "report_count": gone_report_count},
+    )
+
+    if gone_report_count and gone_report_count >= threshold:
+        crane.status = "gone"
+
+        session.add(crane)
+        session.flush()
+        session.refresh(crane)
+        logger.info(
+            "crane_status_updated", extra={"crane_id": str(crane_id), "status": "gone"}
+        )

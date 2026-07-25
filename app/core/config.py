@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     test_database_url: str | None = None
     environment: str
     cors_origins: list[str]
+    gone_report_threshold: int = 3
+    ip_hash_salt: str
 
 
 @lru_cache
