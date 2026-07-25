@@ -147,7 +147,7 @@ def get_cranes(
     truncated = len(rows) > limit
 
     logger.info(
-        "resume_list_get_succeeded",
+        "crane_list_get_succeeded",
         extra={"crane_count": str(len(rows)), "truncated": truncated},
     )
     return CraneListResult(cranes=rows[:limit], truncated=truncated)

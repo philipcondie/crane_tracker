@@ -1,7 +1,7 @@
 ## Full Features to add
 - photo links
 - article links (later)
-- gone reports
+- X gone reports
 - async adding of city-neighborhood
 - stats and feed features. (post mvp)
 
