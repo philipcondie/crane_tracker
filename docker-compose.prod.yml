@@ -1,0 +1,60 @@
+services:
+  db:
+    image: postgis/postgis:18-3.6
+    env_file: .env.prod
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  migrate:
+    build: .
+    env_file: .env.prod
+    command: uv run alembic upgrade head
+    depends_on:
+      db:
+        condition: service_healthy
+  app:
+    build: .
+    env_file: .env.prod
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  caddy:
+    image: caddy:2.11.2
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+
+volumes:
+  caddy_data:
+  caddy_config:
+  pgdata:

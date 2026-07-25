@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.routes.crane import crane_router
+from app.routes.health import health_router
 
 settings = get_settings()
 log_level = "DEBUG" if settings.environment.lower() == "dev" else "INFO"
@@ -26,3 +27,4 @@ app.add_middleware(
 )
 
 app.include_router(crane_router)
+app.include_router(health_router)

@@ -149,15 +149,19 @@ dependencies = [
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
     { name = "pydantic-settings" },
-    { name = "pytest" },
-    { name = "pytest-mock" },
     { name = "python-json-logger" },
     { name = "requests" },
-    { name = "ruff" },
     { name = "sqlalchemy" },
     { name = "uuid" },
     { name = "uuid-utils" },
     { name = "uvicorn" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-mock" },
+    { name = "ruff" },
 ]
 
 [package.metadata]
@@ -170,15 +174,19 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.4" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
-    { name = "pytest", specifier = ">=9.1.1" },
-    { name = "pytest-mock", specifier = ">=3.15.1" },
     { name = "python-json-logger", specifier = ">=4.1.0" },
     { name = "requests", specifier = ">=2.34.2" },
-    { name = "ruff", specifier = ">=0.15.20" },
     { name = "sqlalchemy", specifier = ">=2.0.51" },
     { name = "uuid", specifier = ">=1.30" },
     { name = "uuid-utils", specifier = ">=0.16.2" },
     { name = "uvicorn", specifier = ">=0.51.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.1.1" },
+    { name = "pytest-mock", specifier = ">=3.15.1" },
+    { name = "ruff", specifier = ">=0.15.20" },
 ]
 
 [[package]]

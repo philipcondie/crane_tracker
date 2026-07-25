@@ -1,0 +1,35 @@
+# Virtual environments (rebuilt inside the image)
+.venv
+
+# Secrets and env files — never bake these into an image layer.
+# The app gets its config via compose `env_file:` at runtime, not from the image.
+.env
+.env.*
+
+# Python caches / build artifacts
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.pytest_cache/
+.ruff_cache/
+
+# Version control & CI
+.git
+.gitignore
+.github
+
+# Local tooling / docs not needed at runtime
+.claude
+docs/
+notes.md
+AGENTS.md
+*.md
+
+# Compose / deploy configs (not needed inside the app image)
+docker-compose*.yml
+Dockerfile
+.dockerignore
+Caddyfile

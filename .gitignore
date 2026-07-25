@@ -10,7 +10,11 @@ wheels/
 .venv
 
 
+# Env files with real secrets — never commit. Example files are allowed.
 .env
+.env.prod
+!.env.example
+!.env.example.prod
 AGENTS.md
 notes.md
 docs/
