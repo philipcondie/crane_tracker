@@ -18,7 +18,7 @@ services:
   migrate:
     build: .
     env_file: .env.prod
-    command: uv run alembic upgrade head
+    command: alembic upgrade head
     depends_on:
       db:
         condition: service_healthy
