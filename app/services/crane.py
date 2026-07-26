@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 CRANE_LIST_LIMIT = 5000
-CRANE_DUPLICATE_DISTANCE_METERS = 10
+CRANE_DUPLICATE_DISTANCE_METERS = 100
 
 
 def hash_ip(ip_address: str) -> str:
