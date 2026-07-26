@@ -2,12 +2,13 @@ import pytest
 from sqlalchemy import select
 
 from app.core.exceptions import (
+    DuplicateCraneError,
     DuplicateGoneReportError,
     InvalidCoordinateError,
     ResourceNotFoundError,
 )
 from app.models.base import GoneReport, generate_uuid7
-from app.schemas.base import CraneCreate, CraneStatus
+from app.schemas.base import CraneInput, CraneStatus
 from app.services.crane import (
     create_crane,
     delete_crane,
@@ -19,12 +20,14 @@ from tests.utils.constants import SF_TEST_LAT, SF_TEST_LNG, TEST_IP_ADDR
 
 
 def test_create_crane_valid(session):
-    crane_input = CraneCreate(
+    crane_input = CraneInput(
         lat=SF_TEST_LAT,
         lng=SF_TEST_LNG,
         project_name="test_project",
     )
-    crane = create_crane(session=session, input=crane_input)
+    crane = create_crane(
+        session=session, input=crane_input, override_duplicate_warning=False
+    )
 
     assert crane.id is not None
     assert crane.lat == SF_TEST_LAT
@@ -35,13 +38,98 @@ def test_create_crane_valid(session):
     assert crane.neighborhood == "Mission Bay"
 
 
-def test_get_crane_valid(session):
-    crane_input = CraneCreate(
+def test_create_duplicate_crane_raises_duplicate_error(session):
+    crane_input = CraneInput(
         lat=SF_TEST_LAT,
         lng=SF_TEST_LNG,
         project_name="test_project",
     )
-    crane_create = create_crane(session=session, input=crane_input)
+    create_crane(session=session, input=crane_input, override_duplicate_warning=False)
+
+    with pytest.raises(DuplicateCraneError):
+        create_crane(
+            session=session, input=crane_input, override_duplicate_warning=False
+        )
+
+
+def test_create_crane_within_duplicate_distance_raises_duplicate_error(session):
+    existing_crane_input = CraneInput(
+        lat=SF_TEST_LAT,
+        lng=SF_TEST_LNG,
+        project_name="existing_crane",
+    )
+    nearby_crane_input = CraneInput(
+        lat=SF_TEST_LAT + 0.000045,
+        lng=SF_TEST_LNG,
+        project_name="nearby_crane",
+    )
+    create_crane(
+        session=session,
+        input=existing_crane_input,
+        override_duplicate_warning=False,
+    )
+
+    with pytest.raises(DuplicateCraneError):
+        create_crane(
+            session=session,
+            input=nearby_crane_input,
+            override_duplicate_warning=False,
+        )
+
+
+def test_create_crane_outside_duplicate_distance_succeeds(session):
+    existing_crane_input = CraneInput(
+        lat=SF_TEST_LAT,
+        lng=SF_TEST_LNG,
+        project_name="existing_crane",
+    )
+    distant_crane_input = CraneInput(
+        lat=SF_TEST_LAT + 0.00018,
+        lng=SF_TEST_LNG,
+        project_name="distant_crane",
+    )
+    existing_crane = create_crane(
+        session=session,
+        input=existing_crane_input,
+        override_duplicate_warning=False,
+    )
+
+    distant_crane = create_crane(
+        session=session,
+        input=distant_crane_input,
+        override_duplicate_warning=False,
+    )
+
+    assert existing_crane.id != distant_crane.id
+
+
+def test_create_duplicate_crane_succeeds_with_override(session):
+    crane_input = CraneInput(
+        lat=SF_TEST_LAT,
+        lng=SF_TEST_LNG,
+        project_name="test_project",
+    )
+    crane_1 = create_crane(
+        session=session, input=crane_input, override_duplicate_warning=False
+    )
+    crane_2 = create_crane(
+        session=session, input=crane_input, override_duplicate_warning=True
+    )
+
+    assert crane_1.id != crane_2.id
+    assert crane_1.lat == crane_2.lat
+    assert crane_1.lng == crane_2.lng
+
+
+def test_get_crane_valid(session):
+    crane_input = CraneInput(
+        lat=SF_TEST_LAT,
+        lng=SF_TEST_LNG,
+        project_name="test_project",
+    )
+    crane_create = create_crane(
+        session=session, input=crane_input, override_duplicate_warning=False
+    )
 
     crane_get = get_crane(session, crane_create.id)
 
@@ -59,12 +147,14 @@ def test_get_crane_invalid(session):
 
 
 def test_delete_crane_valid(session):
-    crane_input = CraneCreate(
+    crane_input = CraneInput(
         lat=SF_TEST_LAT,
         lng=SF_TEST_LNG,
         project_name="test_project",
     )
-    crane_create = create_crane(session=session, input=crane_input)
+    crane_create = create_crane(
+        session=session, input=crane_input, override_duplicate_warning=False
+    )
 
     delete_crane(session=session, id=crane_create.id)
 
@@ -78,15 +168,15 @@ def test_delete_crane_invalid(session):
 
 
 def test_get_cranes_valid(session):
-    crane_1_input = CraneCreate(lat=10, lng=10, project_name="crane_1")
+    crane_1_input = CraneInput(lat=10, lng=10, project_name="crane_1")
 
-    crane_2_input = CraneCreate(lat=2, lng=7, project_name="crane_2")
+    crane_2_input = CraneInput(lat=2, lng=7, project_name="crane_2")
 
-    crane_3_input = CraneCreate(lat=10.1, lng=10.1, project_name="crane_3")
+    crane_3_input = CraneInput(lat=10.1, lng=10.1, project_name="crane_3")
 
-    crane_1 = create_crane(session, crane_1_input)
-    crane_2 = create_crane(session, crane_2_input)
-    crane_3 = create_crane(session, crane_3_input)
+    crane_1 = create_crane(session, crane_1_input, override_duplicate_warning=False)
+    crane_2 = create_crane(session, crane_2_input, override_duplicate_warning=False)
+    crane_3 = create_crane(session, crane_3_input, override_duplicate_warning=False)
 
     crane_result = get_cranes(session=session, north=10, south=0, east=10, west=0)
     assert len(crane_result.cranes) == 2
@@ -98,12 +188,12 @@ def test_get_cranes_valid(session):
 
 
 def test_get_cranes_at_limit(session):
-    crane_1_input = CraneCreate(lat=10, lng=10, project_name="crane_1")
+    crane_1_input = CraneInput(lat=10, lng=10, project_name="crane_1")
 
-    crane_2_input = CraneCreate(lat=2, lng=7, project_name="crane_2")
+    crane_2_input = CraneInput(lat=2, lng=7, project_name="crane_2")
 
-    crane_1 = create_crane(session, crane_1_input)
-    crane_2 = create_crane(session, crane_2_input)
+    crane_1 = create_crane(session, crane_1_input, override_duplicate_warning=False)
+    crane_2 = create_crane(session, crane_2_input, override_duplicate_warning=False)
     crane_result = get_cranes(
         session=session, north=10, south=0, east=10, west=0, limit=2
     )
@@ -117,15 +207,15 @@ def test_get_cranes_at_limit(session):
 
 
 def test_get_cranes_above_limit(session):
-    crane_1_input = CraneCreate(lat=10, lng=10, project_name="crane_1")
+    crane_1_input = CraneInput(lat=10, lng=10, project_name="crane_1")
 
-    crane_2_input = CraneCreate(lat=2, lng=7, project_name="crane_2")
+    crane_2_input = CraneInput(lat=2, lng=7, project_name="crane_2")
 
-    crane_3_input = CraneCreate(lat=4, lng=4, project_name="crane_3")
+    crane_3_input = CraneInput(lat=4, lng=4, project_name="crane_3")
 
-    crane_1 = create_crane(session, crane_1_input)
-    crane_2 = create_crane(session, crane_2_input)
-    crane_3 = create_crane(session, crane_3_input)
+    crane_1 = create_crane(session, crane_1_input, override_duplicate_warning=False)
+    crane_2 = create_crane(session, crane_2_input, override_duplicate_warning=False)
+    crane_3 = create_crane(session, crane_3_input, override_duplicate_warning=False)
 
     crane_result = get_cranes(
         session=session, north=10, south=0, east=10, west=0, limit=2
@@ -139,9 +229,9 @@ def test_get_cranes_above_limit(session):
 
 
 def test_get_cranes_empty_list(session):
-    crane_1_input = CraneCreate(lat=10, lng=10, project_name="crane_1")
+    crane_1_input = CraneInput(lat=10, lng=10, project_name="crane_1")
 
-    create_crane(session, crane_1_input)
+    create_crane(session, crane_1_input, override_duplicate_warning=False)
 
     crane_result = get_cranes(session=session, north=0, south=-10, east=0, west=-10)
     assert len(crane_result.cranes) == 0
@@ -171,13 +261,15 @@ def test_report_crane_as_gone_invalid(session):
 
 
 def test_report_crane_as_gone_succeeds(session):
-    crane_input = CraneCreate(
+    crane_input = CraneInput(
         lat=SF_TEST_LAT,
         lng=SF_TEST_LNG,
         project_name="test_project",
     )
 
-    crane_create = create_crane(session=session, input=crane_input)
+    crane_create = create_crane(
+        session=session, input=crane_input, override_duplicate_warning=False
+    )
 
     report_crane_as_gone(
         session=session, crane_id=crane_create.id, client_ip=TEST_IP_ADDR
@@ -185,13 +277,15 @@ def test_report_crane_as_gone_succeeds(session):
 
 
 def test_report_crane_as_gone_status_updates(session):
-    crane_input = CraneCreate(
+    crane_input = CraneInput(
         lat=SF_TEST_LAT,
         lng=SF_TEST_LNG,
         project_name="test_project",
     )
 
-    crane_create = create_crane(session=session, input=crane_input)
+    crane_create = create_crane(
+        session=session, input=crane_input, override_duplicate_warning=False
+    )
 
     report_crane_as_gone(
         session=session, crane_id=crane_create.id, client_ip=TEST_IP_ADDR, threshold=2
@@ -213,13 +307,15 @@ def test_report_crane_as_gone_status_updates(session):
 
 # repeated ip address
 def test_report_crane_as_gone_repeated_ip_address(session):
-    crane_input = CraneCreate(
+    crane_input = CraneInput(
         lat=SF_TEST_LAT,
         lng=SF_TEST_LNG,
         project_name="test_project",
     )
 
-    crane_create = create_crane(session=session, input=crane_input)
+    crane_create = create_crane(
+        session=session, input=crane_input, override_duplicate_warning=False
+    )
 
     report_crane_as_gone(
         session=session, crane_id=crane_create.id, client_ip=TEST_IP_ADDR, threshold=1

@@ -5,18 +5,37 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 import app.services.crane as crane_service
 from app.core.dependencies import SessionDep
 from app.core.exceptions import (
+    DuplicateCraneError,
     DuplicateGoneReportError,
     InvalidCoordinateError,
     ResourceNotFoundError,
 )
-from app.schemas.base import CraneCreate, CraneDetail, CraneListResponse, CraneSummary
+from app.schemas.base import (
+    CraneDetail,
+    CraneInput,
+    CraneListResponse,
+    CraneSummary,
+    CreateCraneRequest,
+)
 
 crane_router = APIRouter(prefix="/cranes")
 
 
 @crane_router.post("", response_model=CraneSummary, status_code=status.HTTP_201_CREATED)
-def create_crane(session: SessionDep, crane_input: CraneCreate):
-    crane = crane_service.create_crane(session=session, input=crane_input)
+def create_crane(session: SessionDep, create_request: CreateCraneRequest):
+    crane_input = CraneInput(
+        lat=create_request.lat,
+        lng=create_request.lng,
+        project_name=create_request.project_name,
+    )
+    try:
+        crane = crane_service.create_crane(
+            session=session,
+            input=crane_input,
+            override_duplicate_warning=create_request.override_duplicate_warning,
+        )
+    except DuplicateCraneError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     session.commit()
     return crane
 

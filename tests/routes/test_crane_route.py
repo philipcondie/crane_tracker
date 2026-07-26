@@ -24,6 +24,55 @@ def test_create_crane_route(client):
     assert data["neighborhood"] == "Mission Bay"
 
 
+def test_create_crane_route_returns_status_409(client):
+    response = client.post(
+        "/cranes",
+        json={
+            "lat": SF_TEST_LAT,
+            "lng": SF_TEST_LNG,
+            "projectName": "test_project",
+        },
+    )
+
+    assert response.status_code == 201
+
+    response = client.post(
+        "/cranes",
+        json={
+            "lat": SF_TEST_LAT,
+            "lng": SF_TEST_LNG,
+            "projectName": "test_project",
+        },
+    )
+
+    assert response.status_code == 409
+
+
+def test_create_crane_route_returns_status_201_with_duplicate_override(client):
+    response = client.post(
+        "/cranes",
+        json={
+            "lat": SF_TEST_LAT,
+            "lng": SF_TEST_LNG,
+            "projectName": "test_project",
+        },
+    )
+
+    assert response.status_code == 201
+
+    response = client.post(
+        "/cranes",
+        json={
+            "lat": SF_TEST_LAT,
+            "lng": SF_TEST_LNG,
+            "projectName": "test_project",
+            "overrideDuplicateWarning": True,
+        },
+    )
+
+    assert response.status_code == 201
+
+
 def test_get_crane_route(client):
     response = client.post(
         "/cranes",

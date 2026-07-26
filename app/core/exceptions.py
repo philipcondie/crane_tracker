@@ -24,3 +24,12 @@ class DuplicateGoneReportError(Exception):
 
     def __init__(self):
         super().__init__("Duplicate gone reports submitted by same IP for same crane")
+
+
+class DuplicateCraneError(Exception):
+    """Exception for if the user may be entering a duplicate crane"""
+
+    def __init__(
+        self,
+    ) -> None:
+        super().__init__("Possible duplicate crane entry. Ensure it is a new crane")

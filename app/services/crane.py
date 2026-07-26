@@ -5,21 +5,22 @@ import uuid
 from collections.abc import Sequence
 from typing import NamedTuple
 
-from geoalchemy2 import WKTElement
-from geoalchemy2.functions import ST_MakeEnvelope
-from sqlalchemy import func, select
+from geoalchemy2 import Geography, WKTElement
+from geoalchemy2.functions import ST_DWithin, ST_MakeEnvelope
+from sqlalchemy import cast, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.exceptions import (
+    DuplicateCraneError,
     DuplicateGoneReportError,
     GeocodeRetrievalError,
     InvalidCoordinateError,
     ResourceNotFoundError,
 )
 from app.models.base import Crane, GoneReport
-from app.schemas.base import CraneCreate, CraneStatus
+from app.schemas.base import CraneInput, CraneStatus
 from app.services.geocode import GeocodeData, reverse_geocode
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 CRANE_LIST_LIMIT = 5000
+CRANE_DUPLICATE_DISTANCE_METERS = 10
 
 
 def hash_ip(ip_address: str) -> str:
@@ -39,7 +41,35 @@ class CraneListResult(NamedTuple):
     truncated: bool
 
 
-def create_crane(session: Session, input: CraneCreate) -> Crane:
+def create_crane(
+    session: Session, input: CraneInput, override_duplicate_warning: bool
+) -> Crane:
+    # look up cranes within radius
+    input_point = WKTElement(f"POINT({input.lng} {input.lat})", srid=4326)
+    if override_duplicate_warning is False:
+        query = (
+            select(Crane)
+            .where(
+                ST_DWithin(
+                    cast(Crane.location, Geography),
+                    cast(input_point, Geography),
+                    CRANE_DUPLICATE_DISTANCE_METERS,
+                )
+            )
+            .exists()
+        )
+        possible_duplicate = session.scalar(select(query))
+        if possible_duplicate:
+            logger.info(
+                "create_crane_failed",
+                extra={
+                    "reason": "possible duplicate entry",
+                    "lat": input.lat,
+                    "lng": input.lng,
+                },
+            )
+            raise DuplicateCraneError()
+
     try:
         geocode_data = reverse_geocode(lat=input.lat, lng=input.lng)
     except GeocodeRetrievalError as e:
@@ -54,7 +84,7 @@ def create_crane(session: Session, input: CraneCreate) -> Crane:
         status=CraneStatus.ACTIVE,
         city=geocode_data.city,
         neighborhood=geocode_data.neighborhood,
-        location=WKTElement(f"POINT({input.lng} {input.lat})", srid=4326),
+        location=input_point,
     )
 
     session.add(crane)

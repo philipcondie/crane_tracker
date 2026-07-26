@@ -17,10 +17,14 @@ class BaseApiSchema(BaseModel):
     )
 
 
-class CraneCreate(BaseApiSchema):
+class CraneInput(BaseApiSchema):
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
     project_name: str | None = None
+
+
+class CreateCraneRequest(CraneInput):
+    override_duplicate_warning: bool = False
 
 
 class CraneSummary(BaseApiSchema):
