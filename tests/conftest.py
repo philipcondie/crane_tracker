@@ -5,6 +5,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.config import get_settings
 from app.core.database import get_session
+from app.core.limiter import limiter
 from app.main import app
 from app.models.base import Crane
 
@@ -12,6 +13,12 @@ settings = get_settings()
 engine = create_engine(settings.test_database_url)
 
 TestingSessionLocal = sessionmaker(engine, expire_on_commit=False)
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limiter():
+    yield
+    limiter.reset()
 
 
 @pytest.fixture

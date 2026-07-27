@@ -3,6 +3,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 import app.services.crane as crane_service
+from app.core.config import get_settings
 from app.core.dependencies import SessionDep
 from app.core.exceptions import (
     DuplicateCraneError,
@@ -10,6 +11,7 @@ from app.core.exceptions import (
     InvalidCoordinateError,
     ResourceNotFoundError,
 )
+from app.core.limiter import limiter
 from app.schemas.base import (
     CraneDetail,
     CraneInput,
@@ -18,11 +20,16 @@ from app.schemas.base import (
     CreateCraneRequest,
 )
 
+settings = get_settings()
+
 crane_router = APIRouter(prefix="/cranes")
 
 
 @crane_router.post("", response_model=CraneSummary, status_code=status.HTTP_201_CREATED)
-def create_crane(session: SessionDep, create_request: CreateCraneRequest):
+@limiter.limit(settings.create_rate_limit)
+def create_crane(
+    request: Request, session: SessionDep, create_request: CreateCraneRequest
+):
     crane_input = CraneInput(
         lat=create_request.lat,
         lng=create_request.lng,
@@ -68,12 +75,7 @@ def get_cranes(
 
 @crane_router.post("/{crane_id}/report")
 def report_crane_as_gone(session: SessionDep, crane_id: uuid.UUID, request: Request):
-    x_forwarded_for = request.headers.get("X-Forwarded-For")
-
-    if x_forwarded_for:
-        client_ip = x_forwarded_for.split(",")[0].strip()
-    else:
-        client_ip = request.client.host if request.client else None
+    client_ip = request.client.host if request.client else None
 
     if client_ip is None:
         raise HTTPException(

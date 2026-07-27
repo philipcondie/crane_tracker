@@ -1,8 +1,11 @@
 from asgi_correlation_id import CorrelationIdMiddleware
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.core.config import get_settings
+from app.core.limiter import limiter
 from app.core.logging import configure_logging
 from app.routes.crane import crane_router
 from app.routes.health import health_router
@@ -17,6 +20,7 @@ methods = (
 )
 
 app = FastAPI()
+app.state.limiter = limiter
 
 app.add_middleware(CorrelationIdMiddleware)
 app.add_middleware(
@@ -24,6 +28,11 @@ app.add_middleware(
     allow_origins=origins,
     allow_methods=methods,
     allow_headers=["*"],
+)
+
+app.add_exception_handler(
+    RateLimitExceeded,
+    _rate_limit_exceeded_handler,  # pyright: ignore[reportArgumentType]
 )
 
 app.include_router(crane_router)

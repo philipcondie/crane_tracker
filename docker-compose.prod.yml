@@ -10,6 +10,8 @@ services:
         max-file: "3"
     volumes:
       - pgdata:/var/lib/postgresql
+    networks:
+      - internal
     healthcheck:
       test: ["CMD-SHELL", "pg_isready"]
       interval: 5s
@@ -19,6 +21,8 @@ services:
     build: .
     env_file: .env.prod
     command: alembic upgrade head
+    networks:
+      - internal
     depends_on:
       db:
         condition: service_healthy
@@ -26,11 +30,16 @@ services:
     build: .
     env_file: .env.prod
     restart: unless-stopped
+    command: >
+      uvicorn app.main:app --host 0.0.0.0 --port 8000
+      --proxy-headers --forwarded-allow-ips=172.28.0.2
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
+    networks:
+      - internal
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -50,8 +59,18 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
       - caddy_config:/config
+    networks:
+      internal:
+        ipv4_address: 172.28.0.2
     depends_on:
       - app
+
+
+networks:
+  internal:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/28
 
 
 volumes:

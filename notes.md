@@ -6,7 +6,7 @@
 - stats and feed features. (post mvp)
 
 ## Improvements
-- prevent duplicates
+- X prevent duplicates
 - caching
 - center location on frontend to user location or other default besides hardcoded value
 - decide if project name is required. what should be the central display attribute?

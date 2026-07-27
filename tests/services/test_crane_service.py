@@ -59,7 +59,7 @@ def test_create_crane_within_duplicate_distance_raises_duplicate_error(session):
         project_name="existing_crane",
     )
     nearby_crane_input = CraneInput(
-        lat=SF_TEST_LAT + 0.000045,
+        lat=SF_TEST_LAT + 0.00045,
         lng=SF_TEST_LNG,
         project_name="nearby_crane",
     )
@@ -84,7 +84,7 @@ def test_create_crane_outside_duplicate_distance_succeeds(session):
         project_name="existing_crane",
     )
     distant_crane_input = CraneInput(
-        lat=SF_TEST_LAT + 0.00018,
+        lat=SF_TEST_LAT + 0.00135,
         lng=SF_TEST_LNG,
         project_name="distant_crane",
     )

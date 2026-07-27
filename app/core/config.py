@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     cors_origins: list[str]
     gone_report_threshold: int = 3
     ip_hash_salt: str
+    create_rate_limit: str = "5/hr"
 
 
 @lru_cache

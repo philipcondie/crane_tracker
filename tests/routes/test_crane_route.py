@@ -1,3 +1,6 @@
+from fastapi.testclient import TestClient
+
+from app.main import app
 from tests.utils.constants import SF_TEST_LAT, SF_TEST_LNG, TEST_IP_ADDR
 
 
@@ -193,10 +196,9 @@ def test_report_crane_as_gone_succeeds(client):
     ]
 
     for ip_address in ip_addresses:
-        report_response = client.post(
-            f"/cranes/{crane_id}/report", headers={"X-Forwarded-For": ip_address}
-        )
-        assert report_response.status_code == 200
+        with TestClient(app, client=(ip_address, 12345)) as report_client:
+            report_response = report_client.post(f"/cranes/{crane_id}/report")
+            assert report_response.status_code == 200
 
     crane_response = client.get(f"/cranes/{crane_id}")
     data = crane_response.json()
