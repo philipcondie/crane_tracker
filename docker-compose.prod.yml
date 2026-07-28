@@ -32,7 +32,7 @@ services:
     restart: unless-stopped
     command: >
       uvicorn app.main:app --host 0.0.0.0 --port 8000
-      --proxy-headers --forwarded-allow-ips=172.28.0.2
+      --proxy-headers --forwarded-allow-ips=172.28.0.14
     logging:
       driver: json-file
       options:
@@ -61,7 +61,11 @@ services:
       - caddy_config:/config
     networks:
       internal:
-        ipv4_address: 172.28.0.2
+        # Pinned high in the /28 (usable .1–.14) so it clears the dynamic
+        # allocation range: Docker hands out dynamic IPs from .2 upward, so a
+        # low pin like .2 collides with whichever container starts first.
+        # This IP is load-bearing — app's --forwarded-allow-ips trusts it.
+        ipv4_address: 172.28.0.14
     depends_on:
       - app
 

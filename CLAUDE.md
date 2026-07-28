@@ -10,3 +10,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Reference
 - See `AGENTS.md` for project structure, development commands, deployment (Docker Compose + Caddy + GitHub Actions), coding conventions, and testing guidelines.
+
+## Current Implementation Notes
+
+- Crane creation uses SlowAPI with a per-client-IP limit configured by
+  `CREATE_RATE_LIMIT` (default `5/hr`). The limiter currently uses in-memory storage.
+- Possible duplicates are detected with PostGIS within a 100-metre radius.
+- Production Caddy has the static Compose address `172.28.0.2`; Uvicorn trusts proxy
+  headers only from that address and populates `request.client.host`. Application code
+  must not read `X-Forwarded-For` directly.
+- `TestClient` does not run the production Uvicorn command. Route tests should set the
+  direct peer with `TestClient(app, client=(ip, port))`, and the SlowAPI limiter must
+  be reset between tests.
