@@ -8,6 +8,7 @@ from app.core.database import get_session
 from app.core.limiter import limiter
 from app.main import app
 from app.models.base import Crane
+from app.services.geocode import GeocodeData
 
 settings = get_settings()
 engine = create_engine(settings.test_database_url)
@@ -19,6 +20,22 @@ TestingSessionLocal = sessionmaker(engine, expire_on_commit=False)
 def reset_rate_limiter():
     yield
     limiter.reset()
+
+
+@pytest.fixture(autouse=True)
+def stub_reverse_geocode(monkeypatch):
+    monkeypatch.setattr(
+        settings,
+        "r2_public_base_url",
+        "https://photos.example",
+    )
+    monkeypatch.setattr(
+        "app.services.crane.reverse_geocode",
+        lambda lat, lng: GeocodeData(
+            city="San Francisco",
+            neighborhood="Mission Bay",
+        ),
+    )
 
 
 @pytest.fixture

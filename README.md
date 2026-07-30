@@ -47,6 +47,16 @@ Copy `.env.example` to `.env` and provide the database URLs, CORS origins, and
 `IP_HASH_SALT`. Set `CREATE_RATE_LIMIT=5/hr` or omit the variable to use that default;
 do not leave it empty. Values use SlowAPI/limits syntax such as `10/minute`.
 
+Photo uploads use Cloudflare R2 through its S3-compatible API. Configure
+`R2_ENDPOINT_URL`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, and
+`R2_PUBLIC_BASE_URL`. The endpoint URL has the form
+`https://<account-id>.r2.cloudflarestorage.com`; the public base URL should be the
+bucket's `r2.dev` URL or custom public domain.
+
+Uploads accept JPEG, PNG, WebP, HEIC, and HEIF files up to 10 MB. Images are decoded
+and re-encoded before storage to remove EXIF/GPS metadata; HEIC and HEIF inputs are
+stored as browser-compatible JPEGs. GIF uploads are not supported.
+
 ## Project layout
 
 Runtime code lives in `app/` — `routes/` (HTTP handlers), `services/` (business/DB logic),

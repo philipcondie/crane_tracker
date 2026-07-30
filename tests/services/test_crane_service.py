@@ -1,3 +1,5 @@
+from io import BytesIO
+
 import pytest
 from sqlalchemy import select
 
@@ -16,7 +18,9 @@ from app.services.crane import (
     get_cranes,
     report_crane_as_gone,
 )
+from app.services.photo import create_crane_photo
 from tests.utils.constants import SF_TEST_LAT, SF_TEST_LNG, TEST_IP_ADDR
+from tests.utils.images import TEST_JPEG_BYTES
 
 
 def test_create_crane_valid(session):
@@ -167,7 +171,39 @@ def test_delete_crane_invalid(session):
         delete_crane(session=session, id=generate_uuid7())
 
 
-def test_get_cranes_valid(session):
+def test_delete_crane_removes_associated_r2_photos(session, monkeypatch):
+    crane = create_crane(
+        session=session,
+        input=CraneInput(lat=SF_TEST_LAT, lng=SF_TEST_LNG),
+        override_duplicate_warning=False,
+    )
+    deleted_keys = []
+    monkeypatch.setattr(
+        "app.services.storage.upload_photo",
+        lambda file, *, object_key, content_type: (
+            f"https://photos.example/{object_key}"
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.storage.delete_photo",
+        lambda *, object_key: deleted_keys.append(object_key),
+    )
+    photo = create_crane_photo(
+        session=session,
+        crane_id=crane.id,
+        file=BytesIO(TEST_JPEG_BYTES),
+        filename="site.jpg",
+        content_type="image/jpeg",
+    )
+
+    delete_crane(session=session, id=crane.id)
+
+    assert deleted_keys == [photo.storage_key]
+    with pytest.raises(ResourceNotFoundError):
+        get_crane(session=session, id=crane.id)
+
+
+def test_get_cranes_valid(session, monkeypatch):
     crane_1_input = CraneInput(lat=10, lng=10, project_name="crane_1")
 
     crane_2_input = CraneInput(lat=2, lng=7, project_name="crane_2")
@@ -177,6 +213,17 @@ def test_get_cranes_valid(session):
     crane_1 = create_crane(session, crane_1_input, override_duplicate_warning=False)
     crane_2 = create_crane(session, crane_2_input, override_duplicate_warning=False)
     crane_3 = create_crane(session, crane_3_input, override_duplicate_warning=False)
+    monkeypatch.setattr(
+        "app.services.storage.upload_photo",
+        lambda file, *, object_key, content_type: None,
+    )
+    create_crane_photo(
+        session=session,
+        crane_id=crane_1.id,
+        file=BytesIO(TEST_JPEG_BYTES),
+        filename="site.jpg",
+        content_type="image/jpeg",
+    )
 
     crane_result = get_cranes(session=session, north=10, south=0, east=10, west=0)
     assert len(crane_result.cranes) == 2
@@ -184,6 +231,9 @@ def test_get_cranes_valid(session):
     assert crane_1.id in id_list
     assert crane_2.id in id_list
     assert crane_3.id not in id_list
+    photos_by_id = {crane.id: crane.photos for crane in crane_result.cranes}
+    assert photos_by_id[crane_1.id] == 1
+    assert photos_by_id[crane_2.id] == 0
     assert crane_result.truncated is False
 
 

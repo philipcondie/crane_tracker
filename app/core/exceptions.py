@@ -33,3 +33,23 @@ class DuplicateCraneError(Exception):
         self,
     ) -> None:
         super().__init__("Possible duplicate crane entry. Ensure it is a new crane")
+
+
+class InvalidPhotoError(Exception):
+    """Exception for a photo that fails upload validation."""
+
+
+class PhotoTooLargeError(InvalidPhotoError):
+    """Exception for a photo that exceeds the upload size limit."""
+
+
+class PhotoLimitExceededError(InvalidPhotoError):
+    """Exception for a crane that already has the maximum number of photos."""
+
+
+class UnsupportedPhotoTypeError(InvalidPhotoError):
+    """Exception for a photo with a disallowed media type."""
+
+
+class PhotoStorageError(Exception):
+    """Exception for a failure while storing a photo."""

@@ -9,8 +9,9 @@ from geoalchemy2 import Geography, WKTElement
 from geoalchemy2.functions import ST_DWithin, ST_MakeEnvelope
 from sqlalchemy import cast, func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
+import app.services.storage as storage_service
 from app.core.config import get_settings
 from app.core.exceptions import (
     DuplicateCraneError,
@@ -19,8 +20,8 @@ from app.core.exceptions import (
     InvalidCoordinateError,
     ResourceNotFoundError,
 )
-from app.models.base import Crane, GoneReport
-from app.schemas.base import CraneInput, CraneStatus
+from app.models.base import Crane, CranePhoto, GoneReport
+from app.schemas.base import CraneInput, CraneStatus, CraneSummary
 from app.services.geocode import GeocodeData, reverse_geocode
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,7 @@ def hash_ip(ip_address: str) -> str:
 
 
 class CraneListResult(NamedTuple):
-    cranes: Sequence[Crane]
+    cranes: Sequence[CraneSummary]
     truncated: bool
 
 
@@ -96,7 +97,9 @@ def create_crane(
 
 
 def get_crane(session: Session, id: uuid.UUID) -> Crane:
-    query = select(Crane).where(Crane.id == id)
+    query = (
+        select(Crane).options(selectinload(Crane.photo_records)).where(Crane.id == id)
+    )
     row = session.execute(query)
 
     crane = row.scalar_one_or_none()
@@ -111,7 +114,9 @@ def get_crane(session: Session, id: uuid.UUID) -> Crane:
 
 
 def delete_crane(session: Session, id: uuid.UUID) -> None:
-    query = select(Crane).where(Crane.id == id)
+    query = (
+        select(Crane).options(selectinload(Crane.photo_records)).where(Crane.id == id)
+    )
     row = session.execute(query)
     crane = row.scalar_one_or_none()
 
@@ -121,6 +126,9 @@ def delete_crane(session: Session, id: uuid.UUID) -> None:
             extra={"crane_id": str(id), "reason": "crane_not_found"},
         )
         raise ResourceNotFoundError(resource="crane", identifier=str(id))
+
+    for photo in crane.photo_records:
+        storage_service.delete_photo(object_key=photo.storage_key)
 
     session.delete(crane)
     session.flush()
@@ -166,21 +174,33 @@ def get_cranes(
         raise InvalidCoordinateError("East must be > West")
 
     bbox = ST_MakeEnvelope(west, south, east, north, 4326)
+    photo_count = (
+        select(func.count(CranePhoto.id))
+        .where(CranePhoto.crane_id == Crane.id)
+        .correlate(Crane)
+        .scalar_subquery()
+    )
 
     query = (
-        select(Crane)
+        select(Crane, photo_count.label("photo_count"))
         .where(Crane.location.intersects(bbox))
         .order_by(Crane.added_at.desc())
         .limit(limit + 1)
     )
-    rows = session.execute(query).scalars().all()
+    rows = session.execute(query).all()
     truncated = len(rows) > limit
+    cranes = [
+        CraneSummary.model_validate(crane).model_copy(
+            update={"photos": row_photo_count}
+        )
+        for crane, row_photo_count in rows[:limit]
+    ]
 
     logger.info(
         "crane_list_get_succeeded",
         extra={"crane_count": str(len(rows)), "truncated": truncated},
     )
-    return CraneListResult(cranes=rows[:limit], truncated=truncated)
+    return CraneListResult(cranes=cranes, truncated=truncated)
 
 
 def report_crane_as_gone(

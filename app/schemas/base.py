@@ -27,6 +27,15 @@ class CreateCraneRequest(CraneInput):
     override_duplicate_warning: bool = False
 
 
+class CranePhotoResponse(BaseApiSchema):
+    id: uuid.UUID
+    crane_id: uuid.UUID
+    url: str
+    original_filename: str
+    content_type: str
+    added_at: datetime
+
+
 class CraneSummary(BaseApiSchema):
     id: uuid.UUID
     lat: float
@@ -35,14 +44,14 @@ class CraneSummary(BaseApiSchema):
     status: CraneStatus
     city: str | None
     neighborhood: str | None
-    photos: int = 0  # placeholder value until photos is added in v1
+    photos: int = 0
     contribs: int = 0  # placeholder value until contribs is added in v1
     added_at: datetime
 
 
 class CraneDetail(CraneSummary):
-    imgs: list[str] = []  # placeholder until later tables are added
-    links: list[str] = []  # placeholder until later tables are added
+    photo_items: list[CranePhotoResponse] = Field(default_factory=list)
+    links: list[str] = Field(default_factory=list)  # placeholder until links are added
 
 
 class CraneListResponse(BaseApiSchema):
