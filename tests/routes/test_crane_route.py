@@ -5,7 +5,7 @@ from PIL import Image
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
-# from app.core.exceptions import PhotoStorageError
+from app.core.exceptions import PhotoStorageError
 from app.main import app
 from app.models.base import CranePhoto
 from tests.utils.constants import SF_TEST_LAT, SF_TEST_LNG, TEST_IP_ADDR
@@ -350,12 +350,19 @@ def test_upload_crane_photo_route_rejects_invalid_image_contents(client):
     assert response.json()["detail"] == "File is not a valid image"
 
 
-def test_upload_crane_photo_route_returns_503_until_storage_is_configured(client):
+def test_upload_crane_photo_route_returns_503_when_storage_is_unavailable(
+    client, monkeypatch
+):
     crane_response = client.post(
         "/cranes",
         json={"lat": SF_TEST_LAT, "lng": SF_TEST_LNG},
     )
     crane_id = crane_response.json()["id"]
+
+    def unavailable_storage(file, *, object_key, content_type):
+        raise PhotoStorageError("Photo storage is not configured")
+
+    monkeypatch.setattr("app.services.storage.upload_photo", unavailable_storage)
 
     response = client.post(
         f"/cranes/{crane_id}/photos",
@@ -363,6 +370,7 @@ def test_upload_crane_photo_route_returns_503_until_storage_is_configured(client
     )
 
     assert response.status_code == 503
+    assert response.json()["detail"] == "Photo storage is not configured"
 
 
 def test_upload_crane_photo_route_cleans_up_r2_when_commit_fails(

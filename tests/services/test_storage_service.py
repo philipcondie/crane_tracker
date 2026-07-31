@@ -115,6 +115,36 @@ def test_upload_photo_rejects_missing_configuration(monkeypatch, r2_settings):
         )
 
 
+def test_upload_photo_wraps_client_initialization_error(monkeypatch, r2_settings):
+    error = ValueError("Invalid endpoint: not a url")
+
+    def fail_client(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(storage_service, "get_settings", lambda: r2_settings)
+    monkeypatch.setattr(storage_service.boto3, "client", fail_client)
+
+    with pytest.raises(PhotoStorageError, match="not available") as exc_info:
+        storage_service.upload_photo(
+            BytesIO(b"photo bytes"),
+            object_key="cranes/id/photos/photo.jpg",
+            content_type="image/jpeg",
+        )
+
+    assert exc_info.value.__cause__ is error
+
+
+def test_delete_photo_wraps_client_initialization_error(monkeypatch, r2_settings):
+    def fail_client(*args, **kwargs):
+        raise ValueError("Invalid endpoint: not a url")
+
+    monkeypatch.setattr(storage_service, "get_settings", lambda: r2_settings)
+    monkeypatch.setattr(storage_service.boto3, "client", fail_client)
+
+    with pytest.raises(PhotoStorageError, match="not available"):
+        storage_service.delete_photo(object_key="cranes/id/photos/photo.jpg")
+
+
 def test_upload_photo_wraps_s3_error(monkeypatch, r2_settings):
     error = ClientError(
         {"Error": {"Code": "AccessDenied", "Message": "denied"}},
