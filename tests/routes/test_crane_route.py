@@ -5,7 +5,7 @@ from PIL import Image
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.core.exceptions import PhotoStorageError
+# from app.core.exceptions import PhotoStorageError
 from app.main import app
 from app.models.base import CranePhoto
 from tests.utils.constants import SF_TEST_LAT, SF_TEST_LNG, TEST_IP_ADDR
@@ -419,75 +419,77 @@ def test_upload_crane_photo_route_cleans_up_r2_when_commit_fails(
     assert session.scalar(select(CranePhoto)) is None
 
 
-def test_delete_crane_photo_route(client, monkeypatch):
-    crane_response = client.post(
-        "/cranes",
-        json={"lat": SF_TEST_LAT, "lng": SF_TEST_LNG},
-    )
-    crane_id = crane_response.json()["id"]
-    deleted_keys = []
-    monkeypatch.setattr(
-        "app.services.storage.upload_photo",
-        lambda file, *, object_key, content_type: (
-            f"https://photos.example/{object_key}"
-        ),
-    )
-    monkeypatch.setattr(
-        "app.services.storage.delete_photo",
-        lambda *, object_key: deleted_keys.append(object_key),
-    )
-    upload_response = client.post(
-        f"/cranes/{crane_id}/photos",
-        files={"photo": ("site.jpg", TEST_JPEG_BYTES, "image/jpeg")},
-    )
-    photo_id = upload_response.json()["id"]
-
-    response = client.delete(f"/cranes/{crane_id}/photos/{photo_id}")
-
-    assert response.status_code == 204
-    assert len(deleted_keys) == 1
-    detail = client.get(f"/cranes/{crane_id}").json()
-    assert detail["photos"] == 0
-    assert detail["photoItems"] == []
-
-
-def test_delete_crane_photo_route_keeps_record_when_r2_delete_fails(
-    client, monkeypatch
-):
-    crane_response = client.post(
-        "/cranes",
-        json={"lat": SF_TEST_LAT, "lng": SF_TEST_LNG},
-    )
-    crane_id = crane_response.json()["id"]
-    monkeypatch.setattr(
-        "app.services.storage.upload_photo",
-        lambda file, *, object_key, content_type: (
-            f"https://photos.example/{object_key}"
-        ),
-    )
-    upload_response = client.post(
-        f"/cranes/{crane_id}/photos",
-        files={"photo": ("site.jpg", TEST_JPEG_BYTES, "image/jpeg")},
-    )
-    photo_id = upload_response.json()["id"]
-
-    def fail_delete(*, object_key):
-        raise PhotoStorageError("Photo could not be deleted")
-
-    monkeypatch.setattr("app.services.storage.delete_photo", fail_delete)
-
-    response = client.delete(f"/cranes/{crane_id}/photos/{photo_id}")
-
-    assert response.status_code == 503
-    detail = client.get(f"/cranes/{crane_id}").json()
-    assert detail["photos"] == 1
-    assert detail["photoItems"][0]["id"] == photo_id
-
-
-def test_delete_crane_photo_route_returns_404_for_missing_photo(client):
-    response = client.delete(
-        "/cranes/019f6854-fcc3-7831-b1ee-d642e12732cc/"
-        "photos/019f6854-fcc3-7831-b1ee-d642e12732cd"
-    )
-
-    assert response.status_code == 404
+# TODO: Re-enable these tests with admin authentication coverage when the delete
+# route is restored.
+# def test_delete_crane_photo_route(client, monkeypatch):
+#     crane_response = client.post(
+#         "/cranes",
+#         json={"lat": SF_TEST_LAT, "lng": SF_TEST_LNG},
+#     )
+#     crane_id = crane_response.json()["id"]
+#     deleted_keys = []
+#     monkeypatch.setattr(
+#         "app.services.storage.upload_photo",
+#         lambda file, *, object_key, content_type: (
+#             f"https://photos.example/{object_key}"
+#         ),
+#     )
+#     monkeypatch.setattr(
+#         "app.services.storage.delete_photo",
+#         lambda *, object_key: deleted_keys.append(object_key),
+#     )
+#     upload_response = client.post(
+#         f"/cranes/{crane_id}/photos",
+#         files={"photo": ("site.jpg", TEST_JPEG_BYTES, "image/jpeg")},
+#     )
+#     photo_id = upload_response.json()["id"]
+#
+#     response = client.delete(f"/cranes/{crane_id}/photos/{photo_id}")
+#
+#     assert response.status_code == 204
+#     assert len(deleted_keys) == 1
+#     detail = client.get(f"/cranes/{crane_id}").json()
+#     assert detail["photos"] == 0
+#     assert detail["photoItems"] == []
+#
+#
+# def test_delete_crane_photo_route_keeps_record_when_r2_delete_fails(
+#     client, monkeypatch
+# ):
+#     crane_response = client.post(
+#         "/cranes",
+#         json={"lat": SF_TEST_LAT, "lng": SF_TEST_LNG},
+#     )
+#     crane_id = crane_response.json()["id"]
+#     monkeypatch.setattr(
+#         "app.services.storage.upload_photo",
+#         lambda file, *, object_key, content_type: (
+#             f"https://photos.example/{object_key}"
+#         ),
+#     )
+#     upload_response = client.post(
+#         f"/cranes/{crane_id}/photos",
+#         files={"photo": ("site.jpg", TEST_JPEG_BYTES, "image/jpeg")},
+#     )
+#     photo_id = upload_response.json()["id"]
+#
+#     def fail_delete(*, object_key):
+#         raise PhotoStorageError("Photo could not be deleted")
+#
+#     monkeypatch.setattr("app.services.storage.delete_photo", fail_delete)
+#
+#     response = client.delete(f"/cranes/{crane_id}/photos/{photo_id}")
+#
+#     assert response.status_code == 503
+#     detail = client.get(f"/cranes/{crane_id}").json()
+#     assert detail["photos"] == 1
+#     assert detail["photoItems"][0]["id"] == photo_id
+#
+#
+# def test_delete_crane_photo_route_returns_404_for_missing_photo(client):
+#     response = client.delete(
+#         "/cranes/019f6854-fcc3-7831-b1ee-d642e12732cc/"
+#         "photos/019f6854-fcc3-7831-b1ee-d642e12732cd"
+#     )
+#
+#     assert response.status_code == 404

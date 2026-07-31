@@ -205,6 +205,7 @@ def upload_crane_photo(
     return serialize_crane_photo(crane_photo)
 
 
+# TODO: Re-enable this route after adding admin-level authorization.
 # @crane_router.delete(
 #     "/{crane_id}/photos/{photo_id}",
 #     status_code=status.HTTP_204_NO_CONTENT,
