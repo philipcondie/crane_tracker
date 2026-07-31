@@ -188,6 +188,9 @@ def upload_crane_photo(
         )
     except PhotoStorageError as e:
         session.rollback()
+        # error not raised before photo is persisted, but cleanup added
+        # as defensive measure
+        cleanup_after_rollback()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(e),

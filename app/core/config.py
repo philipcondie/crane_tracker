@@ -1,7 +1,13 @@
 from functools import lru_cache
+from urllib.parse import urlparse
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings
+
+
+def _is_valid_url(value: str) -> bool:
+    parsed = urlparse(value)
+    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
 
 
 class Settings(BaseSettings):
@@ -36,6 +42,17 @@ class Settings(BaseSettings):
                 f"{self.environment} requires complete R2 configuration when "
                 f"photo storage is enabled; "
                 f"missing: {', '.join(missing)}"
+            )
+
+        malformed = [
+            name
+            for name in ("R2_ENDPOINT_URL", "R2_PUBLIC_BASE_URL")
+            if values[name] and not _is_valid_url(values[name])
+        ]
+        if malformed:
+            raise ValueError(
+                f"R2 configuration requires absolute http(s) URLs; "
+                f"malformed: {', '.join(malformed)}"
             )
         return self
 

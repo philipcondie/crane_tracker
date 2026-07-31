@@ -58,6 +58,26 @@ def test_deployed_environments_require_complete_r2_configuration(environment):
         )
 
 
+@pytest.mark.parametrize(
+    "setting_name",
+    ["r2_endpoint_url", "r2_public_base_url"],
+)
+@pytest.mark.parametrize(
+    "malformed_value",
+    ["not a url", "account.r2.cloudflarestorage.com", "ftp://photos.example.com"],
+)
+def test_r2_configuration_rejects_malformed_urls(setting_name, malformed_value):
+    r2_settings = {**R2_SETTINGS, setting_name: malformed_value}
+
+    with pytest.raises(ValidationError, match="absolute http\\(s\\) URLs"):
+        Settings(
+            **BASE_SETTINGS,
+            **r2_settings,
+            environment="production",
+            _env_file=None,
+        )
+
+
 @pytest.mark.parametrize("environment", ["staging", "production"])
 def test_deployed_environments_accept_complete_r2_configuration(environment):
     settings = Settings(

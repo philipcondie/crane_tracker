@@ -39,13 +39,17 @@ def _get_r2_config() -> tuple[str, str, str, str]:
 @lru_cache(maxsize=1)
 def _get_s3_client() -> Any:
     endpoint_url, access_key_id, secret_access_key, _ = _get_r2_config()
-    return boto3.client(
-        "s3",
-        endpoint_url=endpoint_url,
-        aws_access_key_id=access_key_id,
-        aws_secret_access_key=secret_access_key,
-        region_name="auto",
-    )
+    try:
+        return boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            aws_access_key_id=access_key_id,
+            aws_secret_access_key=secret_access_key,
+            region_name="auto",
+        )
+    except (BotoCoreError, ClientError, ValueError) as e:
+        logger.exception("photo_storage_client_initialization_failed")
+        raise PhotoStorageError("Photo storage is not available") from e
 
 
 def upload_photo(
