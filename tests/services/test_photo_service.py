@@ -8,6 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.core.exceptions import (
     InvalidPhotoError,
     PhotoLimitExceededError,
+    PhotoTooLargeError,
     ResourceNotFoundError,
     UnsupportedPhotoTypeError,
 )
@@ -19,6 +20,7 @@ from app.services.photo import (
     delete_crane_photo,
     finalize_crane_photo,
     preflight_crane_photo,
+    prepare_image,
     upload_crane_photo_to_storage,
 )
 from tests.utils.constants import SF_TEST_LAT, SF_TEST_LNG
@@ -29,6 +31,27 @@ from tests.utils.images import (
     TEST_PNG_BYTES,
 )
 from tests.utils.photos import create_test_crane_photo
+
+
+def make_solid_png(*, width: int, height: int) -> BytesIO:
+    output = BytesIO()
+    Image.new("1", (width, height)).save(output, format="PNG", optimize=True)
+    output.seek(0)
+    return output
+
+
+def test_prepare_image_rejects_oversized_long_edge():
+    photo = make_solid_png(width=4097, height=1)
+
+    with pytest.raises(PhotoTooLargeError, match="longest edge"):
+        prepare_image(photo, "image/png")
+
+
+def test_prepare_image_rejects_oversized_pixel_count():
+    photo = make_solid_png(width=4001, height=4000)
+
+    with pytest.raises(PhotoTooLargeError, match="16,000,000 pixels or fewer"):
+        prepare_image(photo, "image/png")
 
 
 def test_create_crane_photo_strips_metadata_and_persists_record(session, monkeypatch):

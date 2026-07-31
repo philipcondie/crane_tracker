@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 register_heif_opener()
 
 MAX_PHOTO_SIZE_BYTES = 10 * 1024 * 1024
+MAX_PHOTO_PIXELS = 16_000_000
+MAX_PHOTO_LONG_EDGE_PIXELS = 4096
 MAX_PHOTOS_PER_CRANE = 3
 IMAGE_FORMATS = {
     "HEIF": ({"image/heic", "image/heif"}, "JPEG", "image/jpeg", ".jpg"),
@@ -50,6 +52,16 @@ def prepare_image(
             warnings.simplefilter("error", Image.DecompressionBombWarning)
             with Image.open(file) as image:
                 image_format = image.format
+                width, height = image.size
+                if max(width, height) > MAX_PHOTO_LONG_EDGE_PIXELS:
+                    raise PhotoTooLargeError(
+                        "Photo longest edge must be "
+                        f"{MAX_PHOTO_LONG_EDGE_PIXELS:,} pixels or fewer"
+                    )
+                if width * height > MAX_PHOTO_PIXELS:
+                    raise PhotoTooLargeError(
+                        f"Photo must contain {MAX_PHOTO_PIXELS:,} pixels or fewer"
+                    )
                 image.verify()
     except (
         Image.DecompressionBombError,
