@@ -133,6 +133,7 @@ def report_crane_as_gone(session: SessionDep, crane_id: uuid.UUID, request: Requ
 )
 @limiter.limit(settings.create_rate_limit)
 def upload_crane_photo(
+    request: Request,
     session: SessionDep,
     crane_id: uuid.UUID,
     photo: UploadFile = File(...),
