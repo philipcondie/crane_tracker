@@ -1,6 +1,6 @@
 import logging
 from functools import lru_cache
-from typing import BinaryIO
+from typing import Any, BinaryIO
 from urllib.parse import quote
 
 import boto3
@@ -36,12 +36,9 @@ def _get_r2_config() -> tuple[str, str, str, str]:
     )
 
 
-@lru_cache
-def _get_s3_client(
-    endpoint_url: str,
-    access_key_id: str,
-    secret_access_key: str,
-):
+@lru_cache(maxsize=1)
+def _get_s3_client() -> Any:
+    endpoint_url, access_key_id, secret_access_key, _ = _get_r2_config()
     return boto3.client(
         "s3",
         endpoint_url=endpoint_url,
@@ -58,8 +55,8 @@ def upload_photo(
     content_type: str,
 ) -> None:
     """Upload a photo to Cloudflare R2."""
-    endpoint_url, access_key_id, secret_access_key, bucket = _get_r2_config()
-    client = _get_s3_client(endpoint_url, access_key_id, secret_access_key)
+    _, _, _, bucket = _get_r2_config()
+    client = _get_s3_client()
 
     try:
         client.upload_fileobj(
@@ -83,8 +80,8 @@ def upload_photo(
 
 def delete_photo(*, object_key: str) -> None:
     """Delete a photo from Cloudflare R2."""
-    endpoint_url, access_key_id, secret_access_key, bucket = _get_r2_config()
-    client = _get_s3_client(endpoint_url, access_key_id, secret_access_key)
+    _, _, _, bucket = _get_r2_config()
+    client = _get_s3_client()
 
     try:
         client.delete_object(Bucket=bucket, Key=object_key)

@@ -2,7 +2,7 @@ from io import BytesIO
 
 import pytest
 from PIL import Image
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.exceptions import (
@@ -14,7 +14,13 @@ from app.core.exceptions import (
 from app.models.base import CranePhoto, generate_uuid7
 from app.schemas.base import CraneInput
 from app.services.crane import create_crane
-from app.services.photo import create_crane_photo, delete_crane_photo
+from app.services.photo import (
+    cleanup_uploaded_photo,
+    delete_crane_photo,
+    finalize_crane_photo,
+    preflight_crane_photo,
+    upload_crane_photo_to_storage,
+)
 from tests.utils.constants import SF_TEST_LAT, SF_TEST_LNG
 from tests.utils.images import (
     TEST_EXIF_JPEG_BYTES,
@@ -22,6 +28,7 @@ from tests.utils.images import (
     TEST_JPEG_BYTES,
     TEST_PNG_BYTES,
 )
+from tests.utils.photos import create_test_crane_photo
 
 
 def test_create_crane_photo_strips_metadata_and_persists_record(session, monkeypatch):
@@ -40,10 +47,10 @@ def test_create_crane_photo_strips_metadata_and_persists_record(session, monkeyp
 
     monkeypatch.setattr("app.services.storage.upload_photo", fake_upload)
 
-    photo = create_crane_photo(
+    photo = create_test_crane_photo(
         session=session,
         crane_id=crane.id,
-        file=BytesIO(TEST_EXIF_JPEG_BYTES),
+        contents=TEST_EXIF_JPEG_BYTES,
         filename="site.jpg",
         content_type="image/jpeg",
     )
@@ -71,13 +78,7 @@ def test_create_crane_photo_rejects_missing_crane(session, monkeypatch):
     monkeypatch.setattr("app.services.storage.upload_photo", fake_upload)
 
     with pytest.raises(ResourceNotFoundError):
-        create_crane_photo(
-            session=session,
-            crane_id=generate_uuid7(),
-            file=BytesIO(TEST_JPEG_BYTES),
-            filename="site.jpg",
-            content_type="image/jpeg",
-        )
+        preflight_crane_photo(session=session, crane_id=generate_uuid7())
 
     assert upload_called is False
 
@@ -97,10 +98,10 @@ def test_create_crane_photo_converts_heic_to_jpeg(session, monkeypatch):
 
     monkeypatch.setattr("app.services.storage.upload_photo", fake_upload)
 
-    photo = create_crane_photo(
+    photo = create_test_crane_photo(
         session=session,
         crane_id=crane.id,
-        file=BytesIO(TEST_HEIF_BYTES),
+        contents=TEST_HEIF_BYTES,
         filename="site.heic",
         content_type="image/heic",
     )
@@ -129,24 +130,72 @@ def test_create_crane_photo_rejects_fourth_photo(session, monkeypatch):
     monkeypatch.setattr("app.services.storage.upload_photo", fake_upload)
 
     for photo_number in range(3):
-        create_crane_photo(
+        create_test_crane_photo(
             session=session,
             crane_id=crane.id,
-            file=BytesIO(TEST_JPEG_BYTES),
+            contents=TEST_JPEG_BYTES,
             filename=f"site-{photo_number}.jpg",
             content_type="image/jpeg",
         )
 
     with pytest.raises(PhotoLimitExceededError, match="at most 3"):
-        create_crane_photo(
-            session=session,
-            crane_id=crane.id,
-            file=BytesIO(TEST_JPEG_BYTES),
-            filename="site-4.jpg",
-            content_type="image/jpeg",
-        )
+        preflight_crane_photo(session=session, crane_id=crane.id)
 
     assert upload_count == 3
+
+
+def test_final_capacity_check_rejects_racing_upload_and_cleans_new_object(
+    session, monkeypatch
+):
+    crane = create_crane(
+        session=session,
+        input=CraneInput(lat=SF_TEST_LAT, lng=SF_TEST_LNG),
+        override_duplicate_warning=False,
+    )
+    deleted_keys = []
+    monkeypatch.setattr(
+        "app.services.storage.upload_photo",
+        lambda file, *, object_key, content_type: None,
+    )
+    monkeypatch.setattr(
+        "app.services.storage.delete_photo",
+        lambda *, object_key: deleted_keys.append(object_key),
+    )
+    for photo_number in range(2):
+        create_test_crane_photo(
+            session=session,
+            crane_id=crane.id,
+            filename=f"existing-{photo_number}.jpg",
+        )
+
+    preflight_crane_photo(session=session, crane_id=crane.id)
+    session.commit()
+    racing_upload = upload_crane_photo_to_storage(
+        crane_id=crane.id,
+        file=BytesIO(TEST_JPEG_BYTES),
+        filename="racing.jpg",
+        content_type="image/jpeg",
+    )
+
+    create_test_crane_photo(
+        session=session,
+        crane_id=crane.id,
+        filename="winner.jpg",
+    )
+
+    with pytest.raises(PhotoLimitExceededError, match="at most 3"):
+        finalize_crane_photo(
+            session=session,
+            uploaded_photo=racing_upload,
+        )
+
+    session.rollback()
+    cleanup_uploaded_photo(object_key=racing_upload.storage_key)
+    assert deleted_keys == [racing_upload.storage_key]
+    photo_count = session.scalar(
+        select(func.count(CranePhoto.id)).where(CranePhoto.crane_id == crane.id)
+    )
+    assert photo_count == 3
 
 
 def test_create_crane_photo_rejects_invalid_image_contents(session, monkeypatch):
@@ -164,8 +213,7 @@ def test_create_crane_photo_rejects_invalid_image_contents(session, monkeypatch)
     monkeypatch.setattr("app.services.storage.upload_photo", fake_upload)
 
     with pytest.raises(InvalidPhotoError, match="not a valid image"):
-        create_crane_photo(
-            session=session,
+        upload_crane_photo_to_storage(
             crane_id=crane.id,
             file=BytesIO(b"not really a JPEG"),
             filename="site.jpg",
@@ -183,8 +231,7 @@ def test_create_crane_photo_rejects_mismatched_image_type(session, monkeypatch):
     )
 
     with pytest.raises(UnsupportedPhotoTypeError, match="do not match"):
-        create_crane_photo(
-            session=session,
+        upload_crane_photo_to_storage(
             crane_id=crane.id,
             file=BytesIO(TEST_PNG_BYTES),
             filename="site.jpg",
@@ -192,7 +239,7 @@ def test_create_crane_photo_rejects_mismatched_image_type(session, monkeypatch):
         )
 
 
-def test_create_crane_photo_cleans_up_r2_when_database_flush_fails(
+def test_photo_cleanup_happens_after_database_flush_failure_is_rolled_back(
     session, monkeypatch
 ):
     crane = create_crane(
@@ -212,6 +259,14 @@ def test_create_crane_photo_cleans_up_r2_when_database_flush_fails(
         "app.services.storage.delete_photo",
         lambda *, object_key: deleted_keys.append(object_key),
     )
+    preflight_crane_photo(session=session, crane_id=crane.id)
+    session.commit()
+    uploaded_photo = upload_crane_photo_to_storage(
+        crane_id=crane.id,
+        file=BytesIO(TEST_JPEG_BYTES),
+        filename="site.jpg",
+        content_type="image/jpeg",
+    )
     original_flush = session.flush
 
     def fail_photo_flush(*args, **kwargs):
@@ -222,17 +277,15 @@ def test_create_crane_photo_cleans_up_r2_when_database_flush_fails(
     monkeypatch.setattr(session, "flush", fail_photo_flush)
 
     with pytest.raises(SQLAlchemyError, match="flush failed"):
-        create_crane_photo(
+        finalize_crane_photo(
             session=session,
-            crane_id=crane.id,
-            file=BytesIO(TEST_JPEG_BYTES),
-            filename="site.jpg",
-            content_type="image/jpeg",
+            uploaded_photo=uploaded_photo,
         )
 
-    assert len(deleted_keys) == 1
-    assert deleted_keys[0].startswith(f"cranes/{crane.id}/photos/")
+    assert deleted_keys == []
     session.rollback()
+    cleanup_uploaded_photo(object_key=uploaded_photo.storage_key)
+    assert deleted_keys == [uploaded_photo.storage_key]
 
 
 def test_delete_crane_photo_removes_r2_object_and_database_record(session, monkeypatch):
@@ -252,10 +305,10 @@ def test_delete_crane_photo_removes_r2_object_and_database_record(session, monke
         "app.services.storage.delete_photo",
         lambda *, object_key: deleted_keys.append(object_key),
     )
-    photo = create_crane_photo(
+    photo = create_test_crane_photo(
         session=session,
         crane_id=crane.id,
-        file=BytesIO(TEST_JPEG_BYTES),
+        contents=TEST_JPEG_BYTES,
         filename="site.jpg",
         content_type="image/jpeg",
     )
@@ -299,8 +352,7 @@ def test_create_crane_photo_rejects_invalid_photo(
     monkeypatch.setattr("app.services.storage.upload_photo", fake_upload)
 
     with pytest.raises(InvalidPhotoError):
-        create_crane_photo(
-            session=session,
+        upload_crane_photo_to_storage(
             crane_id=crane.id,
             file=BytesIO(contents),
             filename="site.jpg",

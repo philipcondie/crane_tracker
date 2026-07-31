@@ -1,13 +1,13 @@
 import logging
 import uuid
 import warnings
+from dataclasses import dataclass
 from io import BytesIO
 from typing import BinaryIO
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pillow_heif import register_heif_opener
 from sqlalchemy import func, select
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 import app.services.storage as storage_service
@@ -113,16 +113,27 @@ def cleanup_uploaded_photo(*, object_key: str) -> None:
         )
 
 
-def create_crane_photo(
+@dataclass(frozen=True)
+class UploadedCranePhoto:
+    id: uuid.UUID
+    crane_id: uuid.UUID
+    storage_key: str
+    original_filename: str
+    content_type: str
+
+
+def ensure_crane_photo_capacity(
     session: Session,
     *,
     crane_id: uuid.UUID,
-    file: BinaryIO,
-    filename: str,
-    content_type: str,
-) -> CranePhoto:
-    crane = session.scalar(select(Crane).where(Crane.id == crane_id).with_for_update())
-    if crane is None:
+    lock_crane: bool,
+) -> None:
+    crane_query = select(Crane.id).where(Crane.id == crane_id)
+    if lock_crane:
+        crane_query = crane_query.with_for_update()
+
+    crane_exists = session.scalar(crane_query)
+    if crane_exists is None:
         logger.warning(
             "crane_photo_create_failed",
             extra={"crane_id": str(crane_id), "reason": "crane_not_found"},
@@ -145,6 +156,24 @@ def create_crane_photo(
             f"A crane can have at most {MAX_PHOTOS_PER_CRANE} photos"
         )
 
+
+def preflight_crane_photo(session: Session, *, crane_id: uuid.UUID) -> None:
+    """Check existence and capacity without taking a row lock."""
+    ensure_crane_photo_capacity(
+        session=session,
+        crane_id=crane_id,
+        lock_crane=False,
+    )
+
+
+def upload_crane_photo_to_storage(
+    *,
+    crane_id: uuid.UUID,
+    file: BinaryIO,
+    filename: str,
+    content_type: str,
+) -> UploadedCranePhoto:
+    """Validate, process, and upload a photo without a database transaction."""
     if content_type not in ALLOWED_PHOTO_TYPES:
         logger.warning(
             "crane_photo_create_failed",
@@ -193,24 +222,45 @@ def create_crane_photo(
         content_type=stored_content_type,
     )
 
-    photo = CranePhoto(
+    logger.info(
+        "crane_photo_uploaded",
+        extra={"crane_id": str(crane_id), "photo_id": str(photo_id)},
+    )
+    return UploadedCranePhoto(
         id=photo_id,
         crane_id=crane_id,
         storage_key=object_key,
         original_filename=filename,
         content_type=stored_content_type,
     )
-    try:
-        session.add(photo)
-        session.flush()
-        session.refresh(photo)
-    except SQLAlchemyError:
-        cleanup_uploaded_photo(object_key=object_key)
-        raise
+
+
+def finalize_crane_photo(
+    session: Session,
+    *,
+    uploaded_photo: UploadedCranePhoto,
+) -> CranePhoto:
+    """Recheck capacity under a short row lock and persist photo metadata."""
+    ensure_crane_photo_capacity(
+        session=session,
+        crane_id=uploaded_photo.crane_id,
+        lock_crane=True,
+    )
+
+    photo = CranePhoto(
+        id=uploaded_photo.id,
+        crane_id=uploaded_photo.crane_id,
+        storage_key=uploaded_photo.storage_key,
+        original_filename=uploaded_photo.original_filename,
+        content_type=uploaded_photo.content_type,
+    )
+    session.add(photo)
+    session.flush()
+    session.refresh(photo)
 
     logger.info(
         "crane_photo_created",
-        extra={"crane_id": str(crane_id), "photo_id": str(photo.id)},
+        extra={"crane_id": str(photo.crane_id), "photo_id": str(photo.id)},
     )
     return photo
 

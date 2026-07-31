@@ -1,5 +1,3 @@
-from io import BytesIO
-
 import pytest
 from sqlalchemy import select
 
@@ -18,9 +16,9 @@ from app.services.crane import (
     get_cranes,
     report_crane_as_gone,
 )
-from app.services.photo import create_crane_photo
 from tests.utils.constants import SF_TEST_LAT, SF_TEST_LNG, TEST_IP_ADDR
 from tests.utils.images import TEST_JPEG_BYTES
+from tests.utils.photos import create_test_crane_photo
 
 
 def test_create_crane_valid(session):
@@ -188,10 +186,10 @@ def test_delete_crane_removes_associated_r2_photos(session, monkeypatch):
         "app.services.storage.delete_photo",
         lambda *, object_key: deleted_keys.append(object_key),
     )
-    photo = create_crane_photo(
+    photo = create_test_crane_photo(
         session=session,
         crane_id=crane.id,
-        file=BytesIO(TEST_JPEG_BYTES),
+        contents=TEST_JPEG_BYTES,
         filename="site.jpg",
         content_type="image/jpeg",
     )
@@ -217,10 +215,10 @@ def test_get_cranes_valid(session, monkeypatch):
         "app.services.storage.upload_photo",
         lambda file, *, object_key, content_type: None,
     )
-    create_crane_photo(
+    create_test_crane_photo(
         session=session,
         crane_id=crane_1.id,
-        file=BytesIO(TEST_JPEG_BYTES),
+        contents=TEST_JPEG_BYTES,
         filename="site.jpg",
         content_type="image/jpeg",
     )

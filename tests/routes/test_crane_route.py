@@ -215,7 +215,7 @@ def test_report_crane_as_gone_succeeds(client):
     assert data["status"] == "gone"
 
 
-def test_upload_crane_photo_route(client, monkeypatch):
+def test_upload_crane_photo_route(client, session, monkeypatch):
     crane_response = client.post(
         "/cranes",
         json={"lat": SF_TEST_LAT, "lng": SF_TEST_LNG},
@@ -223,6 +223,7 @@ def test_upload_crane_photo_route(client, monkeypatch):
     crane_id = crane_response.json()["id"]
 
     def fake_upload(file, *, object_key, content_type):
+        assert session.in_transaction() is False
         with Image.open(BytesIO(file.read())) as uploaded:
             assert uploaded.format == "JPEG"
             assert len(uploaded.getexif()) == 0
@@ -262,9 +263,11 @@ def test_upload_crane_photo_route_rejects_fourth_photo(client, monkeypatch):
         json={"lat": SF_TEST_LAT, "lng": SF_TEST_LNG},
     )
     crane_id = crane_response.json()["id"]
+    upload_count = 0
 
     def fake_upload(file, *, object_key, content_type):
-        return f"https://photos.example/{object_key}"
+        nonlocal upload_count
+        upload_count += 1
 
     monkeypatch.setattr("app.services.storage.upload_photo", fake_upload)
 
@@ -288,6 +291,7 @@ def test_upload_crane_photo_route_rejects_fourth_photo(client, monkeypatch):
 
     assert response.status_code == 409
     assert response.json()["detail"] == "A crane can have at most 3 photos"
+    assert upload_count == 3
 
 
 def test_upload_crane_photo_route_returns_404_for_missing_crane(client):
@@ -370,22 +374,39 @@ def test_upload_crane_photo_route_cleans_up_r2_when_commit_fails(
     )
     crane_id = crane_response.json()["id"]
     deleted_keys = []
+    events = []
     monkeypatch.setattr(
         "app.services.storage.upload_photo",
         lambda file, *, object_key, content_type: (
             f"https://photos.example/{object_key}"
         ),
     )
-    monkeypatch.setattr(
-        "app.services.storage.delete_photo",
-        lambda *, object_key: deleted_keys.append(object_key),
-    )
 
-    def fail_commit():
-        raise SQLAlchemyError("commit failed")
+    def track_delete(*, object_key):
+        events.append("delete")
+        deleted_keys.append(object_key)
+
+    monkeypatch.setattr("app.services.storage.delete_photo", track_delete)
+    original_rollback = session.rollback
+
+    def track_rollback():
+        events.append("rollback")
+        return original_rollback()
+
+    monkeypatch.setattr(session, "rollback", track_rollback)
+
+    original_commit = session.commit
+    commit_count = 0
+
+    def fail_final_commit():
+        nonlocal commit_count
+        commit_count += 1
+        if commit_count == 2:
+            raise SQLAlchemyError("commit failed")
+        return original_commit()
 
     with monkeypatch.context() as commit_patch:
-        commit_patch.setattr(session, "commit", fail_commit)
+        commit_patch.setattr(session, "commit", fail_final_commit)
         response = client.post(
             f"/cranes/{crane_id}/photos",
             files={"photo": ("site.jpg", TEST_JPEG_BYTES, "image/jpeg")},
@@ -394,6 +415,7 @@ def test_upload_crane_photo_route_cleans_up_r2_when_commit_fails(
     assert response.status_code == 500
     assert response.json()["detail"] == "Photo metadata could not be saved"
     assert len(deleted_keys) == 1
+    assert events == ["rollback", "delete"]
     assert session.scalar(select(CranePhoto)) is None
 
 
