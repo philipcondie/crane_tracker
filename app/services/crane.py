@@ -20,7 +20,7 @@ from app.core.exceptions import (
     InvalidCoordinateError,
     ResourceNotFoundError,
 )
-from app.models.base import Crane, CranePhoto, GoneReport
+from app.models.base import Crane, CranePhoto, CranePhotoStatus, GoneReport
 from app.schemas.base import CraneInput, CraneStatus, CraneSummary
 from app.services.geocode import GeocodeData, reverse_geocode
 
@@ -98,7 +98,15 @@ def create_crane(
 
 def get_crane(session: Session, id: uuid.UUID) -> Crane:
     query = (
-        select(Crane).options(selectinload(Crane.photo_records)).where(Crane.id == id)
+        select(Crane)
+        .options(
+            selectinload(
+                Crane.photo_records.and_(
+                    CranePhoto.status == CranePhotoStatus.ACTIVE,
+                )
+            )
+        )
+        .where(Crane.id == id)
     )
     row = session.execute(query)
 
@@ -176,7 +184,10 @@ def get_cranes(
     bbox = ST_MakeEnvelope(west, south, east, north, 4326)
     photo_count = (
         select(func.count(CranePhoto.id))
-        .where(CranePhoto.crane_id == Crane.id)
+        .where(
+            CranePhoto.crane_id == Crane.id,
+            CranePhoto.status == CranePhotoStatus.ACTIVE,
+        )
         .correlate(Crane)
         .scalar_subquery()
     )

@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, status
@@ -16,6 +17,7 @@ from app.core.exceptions import (
     PhotoLimitExceededError,
     PhotoStorageError,
     PhotoTooLargeError,
+    PhotoUploadRaceError,
     ResourceNotFoundError,
     UnsupportedPhotoTypeError,
 )
@@ -29,6 +31,8 @@ from app.schemas.base import (
     CraneSummary,
     CreateCraneRequest,
 )
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
@@ -138,35 +142,40 @@ def upload_crane_photo(
     crane_id: uuid.UUID,
     photo: UploadFile = File(...),
 ):
-    uploaded_photo = None
     crane_photo = None
-
-    def cleanup_after_rollback() -> None:
-        if uploaded_photo is not None:
-            photo_service.cleanup_uploaded_photo(object_key=uploaded_photo.storage_key)
+    photo_id = None
 
     try:
-        photo_service.preflight_crane_photo(session=session, crane_id=crane_id)
-        session.commit()  # required to close out transaction before next steps
-
-        uploaded_photo = photo_service.upload_crane_photo_to_storage(
+        crane_photo, prepared_file = photo_service.preupload_crane_photo(
+            session=session,
             crane_id=crane_id,
             file=photo.file,
             filename=photo.filename or "photo",
             content_type=photo.content_type or "application/octet-stream",
         )
+        session.commit()  # required to close out transaction before next steps
+        photo_id = crane_photo.id
+        storage_key = crane_photo.storage_key
+        content_type = crane_photo.content_type
+
+        photo_service.upload_crane_photo_to_storage(
+            photo_id=photo_id,
+            crane_id=crane_id,
+            storage_key=storage_key,
+            content_type=content_type,
+            file=prepared_file,
+        )
+
         crane_photo = photo_service.finalize_crane_photo(
             session=session,
-            uploaded_photo=uploaded_photo,
+            photo_id=photo_id,
         )
         session.commit()
     except ResourceNotFoundError as e:
         session.rollback()
-        cleanup_after_rollback()
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except PhotoLimitExceededError as e:
         session.rollback()
-        cleanup_after_rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except PhotoTooLargeError as e:
         session.rollback()
@@ -188,19 +197,38 @@ def upload_crane_photo(
         )
     except PhotoStorageError as e:
         session.rollback()
-        # error not raised before photo is persisted, but cleanup added
-        # as defensive measure
-        cleanup_after_rollback()
+        try:
+            photo_service.abandon_crane_photo_upload(session=session, photo_id=photo_id)
+            session.commit()
+        except Exception:
+            session.rollback()
+            logger.exception(
+                "crane_photo_upload_abandon_failed",
+                extra={"crane_id": str(crane_id), "photo_id": str(photo_id)},
+            )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(e),
         )
+    except PhotoUploadRaceError as e:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)
+        )
     except SQLAlchemyError:
         session.rollback()
-        cleanup_after_rollback()
+        try:
+            photo_service.abandon_crane_photo_upload(session=session, photo_id=photo_id)
+            session.commit()
+        except Exception:
+            session.rollback()
+            logger.exception(
+                "crane_photo_upload_abandon_failed",
+                extra={"crane_id": str(crane_id), "photo_id": str(photo_id)},
+            )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Photo metadata could not be saved",
+            detail="Photo could not be saved",
         )
     finally:
         photo.file.close()
@@ -208,29 +236,22 @@ def upload_crane_photo(
     return serialize_crane_photo(crane_photo)
 
 
-# TODO: Re-enable this route after adding admin-level authorization.
-# @crane_router.delete(
-#     "/{crane_id}/photos/{photo_id}",
-#     status_code=status.HTTP_204_NO_CONTENT,
-# )
-# def delete_crane_photo(
-#     session: SessionDep,
-#     crane_id: uuid.UUID,
-#     photo_id: uuid.UUID,
-# ):
-#     try:
-#         photo_service.delete_crane_photo(
-#             session=session,
-#             crane_id=crane_id,
-#             photo_id=photo_id,
-#         )
-#         session.commit()
-#     except ResourceNotFoundError as e:
-#         session.rollback()
-#         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-#     except PhotoStorageError as e:
-#         session.rollback()
-#         raise HTTPException(
-#             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-#             detail=str(e),
-#         )
+@crane_router.delete(
+    "/{crane_id}/photos/{photo_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_crane_photo(
+    session: SessionDep,
+    crane_id: uuid.UUID,
+    photo_id: uuid.UUID,
+):
+    try:
+        photo_service.delete_crane_photo(
+            session=session,
+            crane_id=crane_id,
+            photo_id=photo_id,
+        )
+        session.commit()
+    except ResourceNotFoundError as e:
+        session.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))

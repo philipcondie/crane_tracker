@@ -1,25 +1,31 @@
 import logging
 import uuid
 import warnings
-from dataclasses import dataclass
 from io import BytesIO
 from typing import BinaryIO
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pillow_heif import register_heif_opener
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
+import app.services.job as job_service
 import app.services.storage as storage_service
 from app.core.exceptions import (
     InvalidPhotoError,
     PhotoLimitExceededError,
-    PhotoStorageError,
     PhotoTooLargeError,
+    PhotoUploadRaceError,
     ResourceNotFoundError,
     UnsupportedPhotoTypeError,
 )
-from app.models.base import Crane, CranePhoto, generate_uuid7
+from app.models.base import (
+    Crane,
+    CranePhoto,
+    CranePhotoStatus,
+    JobOperation,
+    generate_uuid7,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -114,26 +120,6 @@ def prepare_image(
     return output, output_content_type, extension
 
 
-def cleanup_uploaded_photo(*, object_key: str) -> None:
-    """Best-effort removal used when database persistence fails."""
-    try:
-        storage_service.delete_photo(object_key=object_key)
-    except PhotoStorageError:
-        logger.warning(
-            "crane_photo_cleanup_failed",
-            extra={"object_key": object_key},
-        )
-
-
-@dataclass(frozen=True)
-class UploadedCranePhoto:
-    id: uuid.UUID
-    crane_id: uuid.UUID
-    storage_key: str
-    original_filename: str
-    content_type: str
-
-
 def ensure_crane_photo_capacity(
     session: Session,
     *,
@@ -152,15 +138,21 @@ def ensure_crane_photo_capacity(
         )
         raise ResourceNotFoundError(resource="crane", identifier=str(crane_id))
 
-    photo_count = session.scalar(
-        select(func.count(CranePhoto.id)).where(CranePhoto.crane_id == crane_id)
+    active_photo_count = session.scalar(
+        select(func.count(CranePhoto.id)).where(
+            CranePhoto.crane_id == crane_id,
+            or_(
+                CranePhoto.status == CranePhotoStatus.ACTIVE,
+                CranePhoto.status == CranePhotoStatus.PENDING_UPLOAD,
+            ),
+        )
     )
-    if photo_count >= MAX_PHOTOS_PER_CRANE:
+    if active_photo_count >= MAX_PHOTOS_PER_CRANE:
         logger.warning(
             "crane_photo_create_failed",
             extra={
                 "crane_id": str(crane_id),
-                "photo_count": photo_count,
+                "active_photo_count": active_photo_count,
                 "reason": "photo_limit_exceeded",
             },
         )
@@ -169,23 +161,15 @@ def ensure_crane_photo_capacity(
         )
 
 
-def preflight_crane_photo(session: Session, *, crane_id: uuid.UUID) -> None:
-    """Check existence and capacity without taking a row lock."""
-    ensure_crane_photo_capacity(
-        session=session,
-        crane_id=crane_id,
-        lock_crane=False,
-    )
-
-
-def upload_crane_photo_to_storage(
+def preupload_crane_photo(
+    session: Session,
     *,
     crane_id: uuid.UUID,
     file: BinaryIO,
     filename: str,
     content_type: str,
-) -> UploadedCranePhoto:
-    """Validate, process, and upload a photo without a database transaction."""
+) -> tuple[CranePhoto, BytesIO]:
+    """Validate the photo and add to database before upload"""
     if content_type not in ALLOWED_PHOTO_TYPES:
         logger.warning(
             "crane_photo_create_failed",
@@ -226,55 +210,97 @@ def upload_crane_photo_to_storage(
         raise PhotoTooLargeError("Photo must be 10 MB or smaller")
 
     prepared_file, stored_content_type, extension = prepare_image(file, content_type)
+
+    ensure_crane_photo_capacity(session=session, crane_id=crane_id, lock_crane=True)
     photo_id = generate_uuid7()
-    object_key = f"cranes/{crane_id}/photos/{photo_id}{extension}"
-    storage_service.upload_photo(
-        prepared_file,
-        object_key=object_key,
+    storage_key = f"cranes/{crane_id}/photos/{photo_id}{extension}"
+
+    photo = CranePhoto(
+        id=photo_id,
+        crane_id=crane_id,
+        storage_key=storage_key,
+        original_filename=filename,
         content_type=stored_content_type,
+    )
+
+    session.add(photo)
+    session.flush()
+
+    logger.info(
+        "crane_photo_created",
+        extra={"crane_id": str(photo.crane_id), "photo_id": str(photo.id)},
+    )
+
+    return photo, prepared_file
+
+
+def upload_crane_photo_to_storage(
+    *,
+    photo_id: uuid.UUID,
+    crane_id: uuid.UUID,
+    storage_key: str,
+    content_type: str,
+    file: BinaryIO,
+) -> None:
+    """Upload a photo without a database transaction."""
+
+    storage_service.upload_photo(
+        file,
+        object_key=storage_key,
+        content_type=content_type,
     )
 
     logger.info(
         "crane_photo_uploaded",
         extra={"crane_id": str(crane_id), "photo_id": str(photo_id)},
     )
-    return UploadedCranePhoto(
-        id=photo_id,
-        crane_id=crane_id,
-        storage_key=object_key,
-        original_filename=filename,
-        content_type=stored_content_type,
-    )
 
 
 def finalize_crane_photo(
     session: Session,
     *,
-    uploaded_photo: UploadedCranePhoto,
+    photo_id: uuid.UUID,
 ) -> CranePhoto:
-    """Recheck capacity under a short row lock and persist photo metadata."""
-    ensure_crane_photo_capacity(
-        session=session,
-        crane_id=uploaded_photo.crane_id,
-        lock_crane=True,
-    )
-
-    photo = CranePhoto(
-        id=uploaded_photo.id,
-        crane_id=uploaded_photo.crane_id,
-        storage_key=uploaded_photo.storage_key,
-        original_filename=uploaded_photo.original_filename,
-        content_type=uploaded_photo.content_type,
-    )
-    session.add(photo)
-    session.flush()
-    session.refresh(photo)
+    """Update the photo status for successful upload"""
+    crane_photo = session.scalars(
+        update(CranePhoto)
+        .where(
+            CranePhoto.id == photo_id,
+            CranePhoto.status == CranePhotoStatus.PENDING_UPLOAD,
+        )
+        .values(status=CranePhotoStatus.ACTIVE)
+        .returning(CranePhoto)
+    ).one_or_none()
+    if crane_photo is None:
+        raise PhotoUploadRaceError()
 
     logger.info(
-        "crane_photo_created",
-        extra={"crane_id": str(photo.crane_id), "photo_id": str(photo.id)},
+        "crane_photo_activated",
+        extra={"crane_id": str(crane_photo.crane_id), "photo_id": str(crane_photo.id)},
     )
-    return photo
+    return crane_photo
+
+
+def abandon_crane_photo_upload(session: Session, *, photo_id: uuid.UUID | None) -> None:
+    if photo_id is None:
+        return
+    photo = session.scalar(
+        select(CranePhoto).where(
+            CranePhoto.id == photo_id,
+            CranePhoto.status == CranePhotoStatus.PENDING_UPLOAD,
+        )
+    )
+    if photo is None:
+        return
+
+    photo.status = CranePhotoStatus.PENDING_DELETE
+    job_service.create_task(
+        session=session, operation=JobOperation.DELETE, storage_key=photo.storage_key
+    )
+    logger.info(
+        "crane_photo_delete_job_added",
+        extra={"crane_id": str(photo.crane_id), "photo_id": str(photo_id)},
+    )
 
 
 def delete_crane_photo(
@@ -287,6 +313,7 @@ def delete_crane_photo(
         select(CranePhoto).where(
             CranePhoto.id == photo_id,
             CranePhoto.crane_id == crane_id,
+            CranePhoto.status == CranePhotoStatus.ACTIVE,
         )
     )
     if photo is None:
@@ -300,10 +327,12 @@ def delete_crane_photo(
         )
         raise ResourceNotFoundError(resource="photo", identifier=str(photo_id))
 
-    storage_service.delete_photo(object_key=photo.storage_key)
-    session.delete(photo)
-    session.flush()
+    photo.status = CranePhotoStatus.PENDING_DELETE
+    job_service.create_task(
+        session=session, operation=JobOperation.DELETE, storage_key=photo.storage_key
+    )
+
     logger.info(
-        "crane_photo_deleted",
+        "crane_photo_delete_job_added",
         extra={"crane_id": str(crane_id), "photo_id": str(photo_id)},
     )

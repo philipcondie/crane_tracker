@@ -53,3 +53,10 @@ class UnsupportedPhotoTypeError(InvalidPhotoError):
 
 class PhotoStorageError(Exception):
     """Exception for a failure while storing a photo."""
+
+
+class PhotoUploadRaceError(Exception):
+    """Exception for a failure to upload the photo"""
+
+    def __init__(self) -> None:
+        super().__init__("Race error during photo upload. Try again.")
