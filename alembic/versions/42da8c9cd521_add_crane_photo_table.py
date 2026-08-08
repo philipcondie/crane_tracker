@@ -31,6 +31,13 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
+        sa.Column(
+            'status',
+            sa.Enum(
+                'active', 'pending_upload', 'pending_delete',
+                name='crane_photo_status'),
+            nullable=False
+        ),
         sa.ForeignKeyConstraint(["crane_id"], ["crane.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("storage_key"),

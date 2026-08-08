@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     r2_secret_access_key: str | None = None
     r2_bucket_name: str | None = None
     r2_public_base_url: str | None = None
+    job_batch_size: int = 5
 
     @model_validator(mode="after")
     def validate_r2_configuration(self) -> "Settings":

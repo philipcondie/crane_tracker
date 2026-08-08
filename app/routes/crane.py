@@ -3,6 +3,7 @@ import uuid
 
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, status
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 import app.services.crane as crane_service
 import app.services.photo as photo_service
@@ -130,6 +131,18 @@ def report_crane_as_gone(session: SessionDep, crane_id: uuid.UUID, request: Requ
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
 
+def _abandon_helper(session: Session, photo_id: uuid.UUID, crane_id: uuid.UUID):
+    try:
+        photo_service.abandon_crane_photo_upload(session=session, photo_id=photo_id)
+        session.commit()
+    except Exception:
+        session.rollback()
+        logger.exception(
+            "crane_photo_upload_abandon_failed",
+            extra={"crane_id": str(crane_id), "photo_id": str(photo_id)},
+        )
+
+
 @crane_router.post(
     "/{crane_id}/photos",
     response_model=CranePhotoResponse,
@@ -144,92 +157,79 @@ def upload_crane_photo(
 ):
     crane_photo = None
     photo_id = None
-
     try:
-        crane_photo, prepared_file = photo_service.preupload_crane_photo(
-            session=session,
-            crane_id=crane_id,
-            file=photo.file,
-            filename=photo.filename or "photo",
-            content_type=photo.content_type or "application/octet-stream",
-        )
-        session.commit()  # required to close out transaction before next steps
-        photo_id = crane_photo.id
-        storage_key = crane_photo.storage_key
-        content_type = crane_photo.content_type
-
-        photo_service.upload_crane_photo_to_storage(
-            photo_id=photo_id,
-            crane_id=crane_id,
-            storage_key=storage_key,
-            content_type=content_type,
-            file=prepared_file,
-        )
-
-        crane_photo = photo_service.finalize_crane_photo(
-            session=session,
-            photo_id=photo_id,
-        )
-        session.commit()
-    except ResourceNotFoundError as e:
-        session.rollback()
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    except PhotoLimitExceededError as e:
-        session.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
-    except PhotoTooLargeError as e:
-        session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-            detail=str(e),
-        )
-    except UnsupportedPhotoTypeError as e:
-        session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=str(e),
-        )
-    except InvalidPhotoError as e:
-        session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=str(e),
-        )
-    except PhotoStorageError as e:
-        session.rollback()
         try:
-            photo_service.abandon_crane_photo_upload(session=session, photo_id=photo_id)
-            session.commit()
-        except Exception:
-            session.rollback()
-            logger.exception(
-                "crane_photo_upload_abandon_failed",
-                extra={"crane_id": str(crane_id), "photo_id": str(photo_id)},
+            crane_photo, prepared_file = photo_service.preupload_crane_photo(
+                session=session,
+                crane_id=crane_id,
+                file=photo.file,
+                filename=photo.filename or "photo",
+                content_type=photo.content_type or "application/octet-stream",
             )
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(e),
-        )
-    except PhotoUploadRaceError as e:
-        session.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)
-        )
-    except SQLAlchemyError:
-        session.rollback()
+            photo_id = crane_photo.id
+            storage_key = crane_photo.storage_key
+            content_type = crane_photo.content_type
+            session.commit()  # required to close out transaction before next steps
+        except ResourceNotFoundError as e:
+            session.rollback()
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        except PhotoLimitExceededError as e:
+            session.rollback()
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+        except PhotoTooLargeError as e:
+            session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                detail=str(e),
+            )
+        except UnsupportedPhotoTypeError as e:
+            session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                detail=str(e),
+            )
+        except InvalidPhotoError as e:
+            session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(e),
+            )
+        except SQLAlchemyError:
+            session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Photo could not be saved",
+            )
+
         try:
-            photo_service.abandon_crane_photo_upload(session=session, photo_id=photo_id)
-            session.commit()
-        except Exception:
-            session.rollback()
-            logger.exception(
-                "crane_photo_upload_abandon_failed",
-                extra={"crane_id": str(crane_id), "photo_id": str(photo_id)},
+            photo_service.upload_crane_photo_to_storage(
+                photo_id=photo_id,
+                crane_id=crane_id,
+                storage_key=storage_key,
+                content_type=content_type,
+                file=prepared_file,
             )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Photo could not be saved",
-        )
+
+            crane_photo = photo_service.finalize_crane_photo(
+                session=session,
+                photo_id=photo_id,
+            )
+            session.commit()
+
+        except (PhotoStorageError, PhotoUploadRaceError) as e:
+            session.rollback()
+            _abandon_helper(session=session, photo_id=photo_id, crane_id=crane_id)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(e),
+            )
+        except SQLAlchemyError:
+            session.rollback()
+            _abandon_helper(session=session, photo_id=photo_id, crane_id=crane_id)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Photo could not be saved",
+            )
     finally:
         photo.file.close()
 

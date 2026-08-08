@@ -5,9 +5,15 @@ from PIL import Image
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.core.exceptions import PhotoStorageError
+from app.core.exceptions import PhotoStorageError, PhotoUploadRaceError
 from app.main import app
-from app.models.base import CranePhoto
+from app.models.base import (
+    CranePhoto,
+    CranePhotoStatus,
+    JobOperation,
+    JobStatus,
+    OutboxJob,
+)
 from tests.utils.constants import SF_TEST_LAT, SF_TEST_LNG, TEST_IP_ADDR
 from tests.utils.images import TEST_GIF_BYTES, TEST_JPEG_BYTES
 
@@ -373,6 +379,42 @@ def test_upload_crane_photo_route_returns_503_when_storage_is_unavailable(
     assert response.json()["detail"] == "Photo storage is not configured"
 
 
+def test_upload_crane_photo_route_cleans_up_when_r2_fails(client, session, monkeypatch):
+    crane_response = client.post(
+        "/cranes",
+        json={"lat": SF_TEST_LAT, "lng": SF_TEST_LNG},
+    )
+    crane_id = crane_response.json()["id"]
+    events = []
+
+    def unavailable_storage(file, *, object_key, content_type):
+        raise PhotoStorageError("Photo storage is not configured")
+
+    monkeypatch.setattr("app.services.storage.upload_photo", unavailable_storage)
+
+    original_rollback = session.rollback
+
+    def track_rollback():
+        events.append("rollback")
+        return original_rollback()
+
+    monkeypatch.setattr(session, "rollback", track_rollback)
+
+    response = client.post(
+        f"/cranes/{crane_id}/photos",
+        files={"photo": ("site.jpg", TEST_JPEG_BYTES, "image/jpeg")},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Photo storage is not configured"
+    assert events == [
+        "rollback",
+    ]
+    assert session.scalar(select(CranePhoto)).status == CranePhotoStatus.PENDING_DELETE
+    assert session.scalar(select(OutboxJob)).operation == JobOperation.DELETE
+    assert session.scalar(select(OutboxJob)).status == JobStatus.PENDING
+
+
 def test_upload_crane_photo_route_cleans_up_r2_when_commit_fails(
     client, session, monkeypatch
 ):
@@ -381,7 +423,6 @@ def test_upload_crane_photo_route_cleans_up_r2_when_commit_fails(
         json={"lat": SF_TEST_LAT, "lng": SF_TEST_LNG},
     )
     crane_id = crane_response.json()["id"]
-    deleted_keys = []
     events = []
     monkeypatch.setattr(
         "app.services.storage.upload_photo",
@@ -390,11 +431,6 @@ def test_upload_crane_photo_route_cleans_up_r2_when_commit_fails(
         ),
     )
 
-    def track_delete(*, object_key):
-        events.append("delete")
-        deleted_keys.append(object_key)
-
-    monkeypatch.setattr("app.services.storage.delete_photo", track_delete)
     original_rollback = session.rollback
 
     def track_rollback():
@@ -421,10 +457,54 @@ def test_upload_crane_photo_route_cleans_up_r2_when_commit_fails(
         )
 
     assert response.status_code == 500
-    assert response.json()["detail"] == "Photo metadata could not be saved"
-    assert len(deleted_keys) == 1
-    assert events == ["rollback", "delete"]
-    assert session.scalar(select(CranePhoto)) is None
+    assert response.json()["detail"] == "Photo could not be saved"
+    assert events == [
+        "rollback",
+    ]
+    assert session.scalar(select(CranePhoto)).status == CranePhotoStatus.PENDING_DELETE
+    assert session.scalar(select(OutboxJob)).operation == JobOperation.DELETE
+    assert session.scalar(select(OutboxJob)).status == JobStatus.PENDING
+
+
+def test_upload_crane_photo_route_cleans_up_r2_on_race(client, session, monkeypatch):
+    crane_response = client.post(
+        "/cranes",
+        json={"lat": SF_TEST_LAT, "lng": SF_TEST_LNG},
+    )
+    crane_id = crane_response.json()["id"]
+    events = []
+
+    monkeypatch.setattr(
+        "app.services.storage.upload_photo",
+        lambda file, *, object_key, content_type: (
+            f"https://photos.example/{object_key}"
+        ),
+    )
+
+    def fail_finalize(session, *, photo_id):
+        raise PhotoUploadRaceError()
+
+    monkeypatch.setattr("app.services.photo.finalize_crane_photo", fail_finalize)
+
+    original_rollback = session.rollback
+
+    def track_rollback():
+        events.append("rollback")
+        return original_rollback()
+
+    monkeypatch.setattr(session, "rollback", track_rollback)
+
+    response = client.post(
+        f"/cranes/{crane_id}/photos",
+        files={"photo": ("site.jpg", TEST_JPEG_BYTES, "image/jpeg")},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Race error during photo upload. Try again."
+    assert events == ["rollback"]
+    assert session.scalar(select(CranePhoto)).status == CranePhotoStatus.PENDING_DELETE
+    assert session.scalar(select(OutboxJob)).operation == JobOperation.DELETE
+    assert session.scalar(select(OutboxJob)).status == JobStatus.PENDING
 
 
 # TODO: Re-enable these tests with admin authentication coverage when the delete
