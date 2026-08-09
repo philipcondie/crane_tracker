@@ -11,7 +11,9 @@ from app.routes.crane import crane_router
 from app.routes.health import health_router
 
 settings = get_settings()
-log_level = "DEBUG" if settings.environment.lower() == "dev" else "INFO"
+log_level = (
+    "DEBUG" if settings.environment.lower() in ("dev", "development") else "INFO"
+)
 configure_logging(level=log_level)
 
 origins = settings.cors_origins
