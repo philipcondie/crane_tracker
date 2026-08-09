@@ -75,3 +75,7 @@ with proxy-header handling enabled and trusts forwarded headers only from that a
 so `request.client.host` contains the public client address used by rate limiting and
 gone-report deduplication. The FastAPI application does not process
 `X-Forwarded-For` directly.
+
+
+# Workers
+Currently planning for a single worker. Haven't configured tests for race conditions with multiple workers.

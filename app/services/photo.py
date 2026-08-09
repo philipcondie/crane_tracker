@@ -281,6 +281,13 @@ def finalize_crane_photo(
     return crane_photo
 
 
+def create_delete_crane_job(session: Session, *, photo: CranePhoto):
+    photo.status = CranePhotoStatus.PENDING_DELETE
+    job_service.create_task(
+        session=session, operation=JobOperation.DELETE, storage_key=photo.storage_key
+    )
+
+
 def abandon_crane_photo_upload(session: Session, *, photo_id: uuid.UUID | None) -> None:
     if photo_id is None:
         return
@@ -293,14 +300,7 @@ def abandon_crane_photo_upload(session: Session, *, photo_id: uuid.UUID | None) 
     if photo is None:
         return
 
-    photo.status = CranePhotoStatus.PENDING_DELETE
-    job_service.create_task(
-        session=session, operation=JobOperation.DELETE, storage_key=photo.storage_key
-    )
-    logger.info(
-        "crane_photo_delete_job_added",
-        extra={"crane_id": str(photo.crane_id), "photo_id": str(photo_id)},
-    )
+    create_delete_crane_job(session=session, photo=photo)
 
 
 def delete_crane_photo(
@@ -316,23 +316,8 @@ def delete_crane_photo(
             CranePhoto.status == CranePhotoStatus.ACTIVE,
         )
     )
+
     if photo is None:
-        logger.warning(
-            "crane_photo_delete_failed",
-            extra={
-                "crane_id": str(crane_id),
-                "photo_id": str(photo_id),
-                "reason": "photo_not_found",
-            },
-        )
         raise ResourceNotFoundError(resource="photo", identifier=str(photo_id))
 
-    photo.status = CranePhotoStatus.PENDING_DELETE
-    job_service.create_task(
-        session=session, operation=JobOperation.DELETE, storage_key=photo.storage_key
-    )
-
-    logger.info(
-        "crane_photo_delete_job_added",
-        extra={"crane_id": str(crane_id), "photo_id": str(photo_id)},
-    )
+    create_delete_crane_job(session=session, photo=photo)

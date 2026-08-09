@@ -3,14 +3,21 @@ import random
 import uuid
 from datetime import timedelta
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, delete, func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+import app.services.photo as photo_service
 import app.services.storage as storage_service
 from app.core.config import get_settings
 from app.core.exceptions import PhotoStorageError, ResourceNotFoundError
-from app.models.base import CranePhoto, JobOperation, JobStatus, OutboxJob
+from app.models.base import (
+    CranePhoto,
+    CranePhotoStatus,
+    JobOperation,
+    JobStatus,
+    OutboxJob,
+)
 from app.worker.claim import claim_jobs
 
 settings = get_settings()
@@ -20,6 +27,7 @@ JOB_BATCH_SIZE = settings.job_batch_size
 MAX_ATTEMPTS = 5
 MIN_DELAY = 100  # ms
 MAX_DELAY = 4000  # ms
+PENDING_UPLOAD_WINDOW = 5000  # ms
 
 
 def calculate_backoff(attempts: int) -> float:
@@ -66,8 +74,8 @@ def run_delete_batch(session: Session):
         claimed_jobs = claim_jobs(
             session=session, operation=JobOperation.DELETE, batch_size=JOB_BATCH_SIZE
         )
-    except SQLAlchemyError:
-        logger.warning("delete_batch_failed", extra={"reason": "failed_to_claim_batch"})
+    except SQLAlchemyError as e:
+        logger.warning("delete_batch_failed", extra={"reason": str(e)})
         return
 
     for job in claimed_jobs:
@@ -108,3 +116,32 @@ def run_delete_batch(session: Session):
                 )
             else:
                 logger.info("delete_crane_job_completed", extra={"job_id": str(job.id)})
+
+
+# find CranePhotos that are pending upload but older than some upload window
+# and mark for delete
+def run_reap_crane_photos(session: Session):
+    try:
+        query = (
+            select(CranePhoto)
+            .where(
+                and_(
+                    CranePhoto.status == CranePhotoStatus.PENDING_UPLOAD,
+                    CranePhoto.added_at
+                    + text(f"INTERVAL '{PENDING_UPLOAD_WINDOW} milliseconds'")
+                    < func.now(),
+                )
+            )
+            .order_by(CranePhoto.added_at)
+            .limit(JOB_BATCH_SIZE)
+            .with_for_update(skip_locked=True)
+        )
+
+        photos = session.scalars(query).all()
+
+        for photo in photos:
+            photo_service.create_delete_crane_job(session=session, photo=photo)
+
+        session.commit()
+    except SQLAlchemyError as e:
+        logger.warning("reap_crane_photos_failed", extra={"reason": str(e)})

@@ -135,6 +135,10 @@ def _abandon_helper(session: Session, photo_id: uuid.UUID, crane_id: uuid.UUID):
     try:
         photo_service.abandon_crane_photo_upload(session=session, photo_id=photo_id)
         session.commit()
+        logger.info(
+            "crane_photo_delete_job_added",
+            extra={"crane_id": str(crane_id), "photo_id": str(photo_id)},
+        )
     except Exception:
         session.rollback()
         logger.exception(
@@ -252,6 +256,32 @@ def delete_crane_photo(
             photo_id=photo_id,
         )
         session.commit()
+        logger.info(
+            "crane_photo_delete_job_added",
+            extra={"crane_id": str(crane_id), "photo_id": str(photo_id)},
+        )
     except ResourceNotFoundError as e:
         session.rollback()
+        logger.warning(
+            "crane_photo_delete_failed",
+            extra={
+                "crane_id": str(crane_id),
+                "photo_id": str(photo_id),
+                "reason": "photo_not_found",
+            },
+        )
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except SQLAlchemyError as e:
+        session.rollback()
+        logger.warning(
+            "crane_photo_delete_failed",
+            extra={
+                "crane_id": str(crane_id),
+                "photo_id": str(photo_id),
+                "reason": str(e),
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Photo could not be deleted",
+        )
