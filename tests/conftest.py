@@ -8,7 +8,7 @@ from app.core.config import get_settings
 from app.core.database import get_session
 from app.core.limiter import limiter
 from app.main import app
-from app.models.base import Crane
+from app.models.base import Crane, CranePhoto, GoneReport, OutboxJob
 from app.services.geocode import GeocodeData
 
 settings = get_settings()
@@ -59,6 +59,9 @@ def session():
     with TestingSessionLocal() as session:
         yield session
         session.execute(delete(Crane))
+        session.execute(delete(GoneReport))
+        session.execute(delete(CranePhoto))
+        session.execute(delete(OutboxJob))
         session.commit()
 
 

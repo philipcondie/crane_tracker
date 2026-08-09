@@ -363,7 +363,7 @@ def test_abandon_crane_photo_upload_on_missing_photo_returns_clean(
     abandon_crane_photo_upload(session=session, photo_id=generate_uuid7())
 
 
-def test_delete_crane_photo_removes_creates_delete_job(session, monkeypatch):
+def test_delete_crane_photo_creates_delete_job(session, monkeypatch):
     crane = create_crane(
         session=session,
         input=CraneInput(lat=SF_TEST_LAT, lng=SF_TEST_LNG),
