@@ -76,7 +76,8 @@ def test_claim_jobs_succeeds(session, monkeypatch):
         select(OutboxJob).where(OutboxJob.storage_key == storage_key)
     )
     assert outbox_job.status == JobStatus.PROCESSING
-    assert outbox_job.attempts == 0
+    # Claiming is what counts as an attempt, so a reclaimed lease still counts.
+    assert outbox_job.attempts == 1
     assert outbox_job.lease_expires_at is not None
 
 
@@ -342,7 +343,7 @@ def test_run_delete_batch_stops_before_first_job_when_already_shutting_down(
     for job in jobs:
         # Claimed but never worked: the lease is what makes these reclaimable.
         assert job.status == JobStatus.PROCESSING
-        assert job.attempts == 0
+        assert job.attempts == 1
         assert job.lease_expires_at is not None
 
 
@@ -379,7 +380,7 @@ def test_run_delete_batch_finishes_current_job_then_stops(
     ).all()
     assert len(abandoned) == 1
     assert abandoned[0].status == JobStatus.PROCESSING
-    assert abandoned[0].attempts == 0
+    assert abandoned[0].attempts == 1
     assert abandoned[0].lease_expires_at is not None
 
 

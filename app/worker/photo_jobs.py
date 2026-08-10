@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 import app.services.photo as photo_service
 import app.services.storage as storage_service
 from app.core.config import get_settings
-from app.core.exceptions import PhotoStorageError, ResourceNotFoundError
+from app.core.exceptions import ResourceNotFoundError
 from app.models.base import (
     CranePhoto,
     CranePhotoStatus,
@@ -69,6 +69,7 @@ def claim_jobs(
     claimed_jobs = []
     for job in jobs:
         job.status = JobStatus.PROCESSING
+        job.attempts += 1
         job.lease_expires_at = func.now() + text(
             f"INTERVAL '{LOCK_LEASE_WINDOW} SECONDS'"
         )
@@ -94,7 +95,6 @@ def capture_failure(session: Session, job_id: uuid.UUID, err_str: str):
     if job is None:
         raise ResourceNotFoundError(resource="outbox_job", identifier=str(job_id))
 
-    job.attempts += 1
     job.status = JobStatus.PENDING if job.attempts < MAX_ATTEMPTS else JobStatus.FAILED
     job.available_at = func.now() + timedelta(
         milliseconds=calculate_backoff(job.attempts)
@@ -112,7 +112,6 @@ def capture_success(session: Session, job_id: uuid.UUID):
     if job is None:
         raise ResourceNotFoundError(resource="outbox_job", identifier=str(job_id))
 
-    job.attempts += 1
     job.status = JobStatus.COMPLETED
     job.lease_expires_at = None
     job.completed_at = func.now()
@@ -122,13 +121,47 @@ def capture_success(session: Session, job_id: uuid.UUID):
     session.commit()
 
 
+def _record_job_outcome(
+    session: Session, job_id: uuid.UUID, err_str: str | None
+) -> bool:
+    """Persist a job outcome, reporting whether the status write succeeded.
+
+    ``err_str`` is ``None`` for a successful job, otherwise the failure detail
+    recorded on the job row for the next retry.
+    """
+    try:
+        if err_str is None:
+            capture_success(session=session, job_id=job_id)
+        else:
+            capture_failure(session=session, job_id=job_id, err_str=err_str)
+    except ResourceNotFoundError:
+        logger.warning(
+            "job_status_update_failed",
+            extra={
+                "operation": "run_delete_batch",
+                "job_id": str(job_id),
+                "reason": "job_not_found",
+            },
+        )
+        session.rollback()
+        return False
+    except SQLAlchemyError:
+        logger.exception(
+            "job_status_update_failed",
+            extra={"operation": "run_delete_batch", "job_id": str(job_id)},
+        )
+        session.rollback()
+        return False
+    return True
+
+
 def run_delete_batch(session: Session, shutdown: threading.Event) -> int:
     try:
         claimed_jobs = claim_jobs(
             session=session, operation=JobOperation.DELETE, batch_size=JOB_BATCH_SIZE
         )
-    except SQLAlchemyError as e:
-        logger.warning("delete_batch_failed", extra={"reason": str(e)})
+    except SQLAlchemyError:
+        logger.exception("delete_batch_failed", extra={"operation": "run_delete_batch"})
         session.rollback()
         return 0
 
@@ -139,45 +172,20 @@ def run_delete_batch(session: Session, shutdown: threading.Event) -> int:
         processed_jobs += 1
         try:
             storage_service.delete_photo(object_key=job.storage_key)
-        except PhotoStorageError as e:
-            try:
-                capture_failure(session=session, job_id=job.id, err_str=str(e))
-            except ResourceNotFoundError:
-                # TODO: Consider if need to log delete_crane result too
-                logger.warning(
-                    "job_status_update_failed",
-                    extra={"job_id": str(job.id), "reason": "job_not_found"},
-                )
-                session.rollback()
-            except SQLAlchemyError as sql_err:
-                logger.warning(
-                    "job_status_update_failed",
-                    extra={"job_id": str(job.id), "reason": str(sql_err)},
-                )
-                session.rollback()
-            else:
-                logger.warning(
-                    "delete_crane_job_failed",
-                    extra={"job_id": str(job.id), "reason": str(e)},
-                )
-
+        except Exception as e:
+            # The storage failure is logged here so it survives even if the
+            # follow-up status write below also fails.
+            logger.exception(
+                "delete_crane_job_failed",
+                extra={"operation": "run_delete_batch", "job_id": str(job.id)},
+            )
+            _record_job_outcome(session=session, job_id=job.id, err_str=str(e))
         else:
-            try:
-                capture_success(session=session, job_id=job.id)
-            except ResourceNotFoundError:
-                logger.warning(
-                    "job_status_update_failed",
-                    extra={"job_id": str(job.id), "reason": "job_not_found"},
+            if _record_job_outcome(session=session, job_id=job.id, err_str=None):
+                logger.info(
+                    "delete_crane_job_completed",
+                    extra={"operation": "run_delete_batch", "job_id": str(job.id)},
                 )
-                session.rollback()
-            except SQLAlchemyError as sql_err:
-                logger.warning(
-                    "job_status_update_failed",
-                    extra={"job_id": str(job.id), "reason": str(sql_err)},
-                )
-                session.rollback()
-            else:
-                logger.info("delete_crane_job_completed", extra={"job_id": str(job.id)})
 
     return processed_jobs
 
@@ -207,8 +215,18 @@ def run_reap_crane_photos(session: Session) -> int:
             photo_service.create_delete_crane_job(session=session, photo=photo)
 
         session.commit()
+        if photos:
+            logger.info(
+                "reap_crane_photos_completed",
+                extra={
+                    "operation": "run_reap_crane_photos",
+                    "photo_count": len(photos),
+                },
+            )
         return len(photos)
-    except SQLAlchemyError as e:
-        logger.warning("reap_crane_photos_failed", extra={"reason": str(e)})
+    except SQLAlchemyError:
+        logger.exception(
+            "reap_crane_photos_failed", extra={"operation": "run_reap_crane_photos"}
+        )
         session.rollback()
         return 0

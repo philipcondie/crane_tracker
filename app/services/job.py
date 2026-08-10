@@ -1,10 +1,6 @@
-import logging
-
 from sqlalchemy.orm import Session
 
 from app.models.base import JobOperation, OutboxJob
-
-logger = logging.getLogger(__name__)
 
 
 def create_task(session: Session, *, operation: JobOperation, storage_key: str):

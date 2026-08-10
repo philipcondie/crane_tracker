@@ -27,12 +27,15 @@ signal.signal(signal.SIGINT, _handle_shutdown)
 WORKER_SLEEP_PERIOD = settings.worker_sleep_period
 
 while not shutdown.is_set():
-    with session_scope("worker") as session:
-        delete_batch_size = run_delete_batch(session=session, shutdown=shutdown)
-        logger.info("run_delete_batch_completed")
-        reap_batch_size = run_reap_crane_photos(session=session)
-        logger.info("run_reap_crane_photos_completed")
-    if delete_batch_size + reap_batch_size == 0:
+    processed = 0
+    try:
+        with session_scope("worker") as session:
+            processed += run_delete_batch(session=session, shutdown=shutdown)
+            processed += run_reap_crane_photos(session=session)
+    except Exception:
+        logger.exception("worker_cycle_failed", extra={"operation": "worker_main"})
+
+    if processed == 0:
         shutdown.wait(WORKER_SLEEP_PERIOD)
 
-logger.info("Shutting down")
+logger.info("worker_shutdown_completed", extra={"operation": "worker_main"})
