@@ -11,16 +11,9 @@ import app.services.storage as storage_service
 from app.core.config import get_settings
 from app.core.dependencies import SessionDep
 from app.core.exceptions import (
-    DuplicateCraneError,
-    DuplicateGoneReportError,
     InvalidCoordinateError,
-    InvalidPhotoError,
-    PhotoLimitExceededError,
     PhotoStorageError,
-    PhotoTooLargeError,
     PhotoUploadRaceError,
-    ResourceNotFoundError,
-    UnsupportedPhotoTypeError,
 )
 from app.core.limiter import limiter
 from app.models.base import CranePhoto
@@ -61,30 +54,22 @@ def create_crane(
         lng=create_request.lng,
         project_name=create_request.project_name,
     )
-    try:
-        crane = crane_service.create_crane(
-            session=session,
-            input=crane_input,
-            override_duplicate_warning=create_request.override_duplicate_warning,
-        )
-    except DuplicateCraneError as e:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+
+    crane = crane_service.create_crane(
+        session=session,
+        input=crane_input,
+        override_duplicate_warning=create_request.override_duplicate_warning,
+    )
     session.commit()
+    logger.info("crane_created", extra={"crane_id": str(crane.id)})
     return crane
 
 
 @crane_router.get("/{crane_id}", response_model=CraneDetail)
 def get_crane(session: SessionDep, crane_id: uuid.UUID):
-    try:
-        crane = crane_service.get_crane(session=session, id=crane_id)
-        photo_items = [serialize_crane_photo(photo) for photo in crane.photo_records]
-    except ResourceNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    except PhotoStorageError as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(e),
-        )
+    crane = crane_service.get_crane(session=session, id=crane_id)
+    photo_items = [serialize_crane_photo(photo) for photo in crane.photo_records]
+
     detail = CraneDetail.model_validate(crane)
     detail.photos = len(crane.photo_records)
     detail.photo_items = photo_items
@@ -104,7 +89,9 @@ def get_cranes(
             session=session, north=north, south=south, east=east, west=west
         )
     except InvalidCoordinateError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(e)
+        )
     return cranes
 
 
@@ -118,17 +105,10 @@ def report_crane_as_gone(session: SessionDep, crane_id: uuid.UUID, request: Requ
             detail="could not identify host to record report",
         )
 
-    try:
-        crane_service.report_crane_as_gone(
-            session=session, crane_id=crane_id, client_ip=client_ip
-        )
-        session.commit()
-    except ResourceNotFoundError as e:
-        session.rollback()
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    except DuplicateGoneReportError as e:
-        session.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    crane_service.report_crane_as_gone(
+        session=session, crane_id=crane_id, client_ip=client_ip
+    )
+    session.commit()
 
 
 def _abandon_helper(session: Session, photo_id: uuid.UUID, crane_id: uuid.UUID):
@@ -162,48 +142,17 @@ def upload_crane_photo(
     crane_photo = None
     photo_id = None
     try:
-        try:
-            crane_photo, prepared_file = photo_service.preupload_crane_photo(
-                session=session,
-                crane_id=crane_id,
-                file=photo.file,
-                filename=photo.filename or "photo",
-                content_type=photo.content_type or "application/octet-stream",
-            )
-            photo_id = crane_photo.id
-            storage_key = crane_photo.storage_key
-            content_type = crane_photo.content_type
-            session.commit()  # required to close out transaction before next steps
-        except ResourceNotFoundError as e:
-            session.rollback()
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-        except PhotoLimitExceededError as e:
-            session.rollback()
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
-        except PhotoTooLargeError as e:
-            session.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-                detail=str(e),
-            )
-        except UnsupportedPhotoTypeError as e:
-            session.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-                detail=str(e),
-            )
-        except InvalidPhotoError as e:
-            session.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=str(e),
-            )
-        except SQLAlchemyError:
-            session.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Photo could not be saved",
-            )
+        crane_photo, prepared_file = photo_service.preupload_crane_photo(
+            session=session,
+            crane_id=crane_id,
+            file=photo.file,
+            filename=photo.filename or "photo",
+            content_type=photo.content_type or "application/octet-stream",
+        )
+        photo_id = crane_photo.id
+        storage_key = crane_photo.storage_key
+        content_type = crane_photo.content_type
+        session.commit()  # required to close out transaction before next steps
 
         try:
             photo_service.upload_crane_photo_to_storage(
@@ -249,39 +198,13 @@ def delete_crane_photo(
     crane_id: uuid.UUID,
     photo_id: uuid.UUID,
 ):
-    try:
-        photo_service.delete_crane_photo(
-            session=session,
-            crane_id=crane_id,
-            photo_id=photo_id,
-        )
-        session.commit()
-        logger.info(
-            "crane_photo_delete_job_added",
-            extra={"crane_id": str(crane_id), "photo_id": str(photo_id)},
-        )
-    except ResourceNotFoundError as e:
-        session.rollback()
-        logger.warning(
-            "crane_photo_delete_failed",
-            extra={
-                "crane_id": str(crane_id),
-                "photo_id": str(photo_id),
-                "reason": "photo_not_found",
-            },
-        )
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    except SQLAlchemyError as e:
-        session.rollback()
-        logger.warning(
-            "crane_photo_delete_failed",
-            extra={
-                "crane_id": str(crane_id),
-                "photo_id": str(photo_id),
-                "reason": str(e),
-            },
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Photo could not be deleted",
-        )
+    photo_service.delete_crane_photo(
+        session=session,
+        crane_id=crane_id,
+        photo_id=photo_id,
+    )
+    session.commit()
+    logger.info(
+        "crane_photo_delete_job_added",
+        extra={"crane_id": str(crane_id), "photo_id": str(photo_id)},
+    )

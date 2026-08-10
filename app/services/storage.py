@@ -102,15 +102,11 @@ def delete_photo(*, object_key: str) -> None:
     )
 
 
-def get_public_url(*, object_key: str) -> str:
+def get_public_url(*, object_key: str) -> str | None:
     """Derive an object's URL from the current public R2 domain."""
     public_base_url = get_settings().r2_public_base_url
     if not public_base_url:
-        logger.error(
-            "photo_storage_configuration_missing",
-            extra={"missing_settings": ["R2_PUBLIC_BASE_URL"]},
-        )
-        raise PhotoStorageError("Photo storage is not configured")
+        return None
 
     encoded_key = quote(object_key, safe="/")
     return f"{public_base_url.rstrip('/')}/{encoded_key}"

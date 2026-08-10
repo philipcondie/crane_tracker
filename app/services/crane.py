@@ -61,15 +61,7 @@ def create_crane(
         )
         possible_duplicate = session.scalar(select(query))
         if possible_duplicate:
-            logger.info(
-                "create_crane_failed",
-                extra={
-                    "reason": "possible duplicate entry",
-                    "lat": input.lat,
-                    "lng": input.lng,
-                },
-            )
-            raise DuplicateCraneError()
+            raise DuplicateCraneError(lat=input.lat, lng=input.lng)
 
     try:
         geocode_data = reverse_geocode(lat=input.lat, lng=input.lng)
@@ -92,7 +84,6 @@ def create_crane(
     session.flush()
     session.refresh(crane)
 
-    logger.info("crane_created", extra={"crane_id": str(crane.id)})
     return crane
 
 
@@ -112,12 +103,8 @@ def get_crane(session: Session, id: uuid.UUID) -> Crane:
 
     crane = row.scalar_one_or_none()
     if crane is None:
-        logger.warning(
-            "crane_get_failed", extra={"crane_id": str(id), "reason": "crane_not_found"}
-        )
         raise ResourceNotFoundError(resource="crane", identifier=str(id))
 
-    logger.info("crane_retrieved", extra={"crane_id": str(id)})
     return crane
 
 
@@ -129,10 +116,6 @@ def delete_crane(session: Session, id: uuid.UUID) -> None:
     crane = row.scalar_one_or_none()
 
     if crane is None:
-        logger.warning(
-            "crane_delete_failed",
-            extra={"crane_id": str(id), "reason": "crane_not_found"},
-        )
         raise ResourceNotFoundError(resource="crane", identifier=str(id))
 
     for photo in crane.photo_records:
@@ -207,10 +190,11 @@ def get_cranes(
         for crane, row_photo_count in rows[:limit]
     ]
 
-    logger.info(
-        "crane_list_get_succeeded",
-        extra={"crane_count": str(len(rows)), "truncated": truncated},
-    )
+    if truncated:
+        logger.warning(
+            "crane_list_truncated",
+            extra={"crane_count": len(cranes), "limit": limit},
+        )
     return CraneListResult(cranes=cranes, truncated=truncated)
 
 
@@ -229,10 +213,6 @@ def report_crane_as_gone(
     crane = row.scalar_one_or_none()
 
     if crane is None:
-        logger.warning(
-            "gone_report_create_failed",
-            extra={"crane_id": str(crane_id), "reason": "crane_not_found"},
-        )
         raise ResourceNotFoundError(resource="crane", identifier=str(crane_id))
 
     # add gone report
@@ -242,11 +222,7 @@ def report_crane_as_gone(
             session.add(report)
             session.flush()
     except IntegrityError as e:
-        logger.warning(
-            "gone_report_create_failed",
-            extra={"crane_id": str(crane_id), "reason": "duplicate reporter ip"},
-        )
-        raise DuplicateGoneReportError() from e
+        raise DuplicateGoneReportError(crane_id=crane_id) from e
 
     # check gone report count and update status
     query = select(func.count(GoneReport.id)).where(GoneReport.crane_id == crane_id)

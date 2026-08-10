@@ -158,7 +158,7 @@ def test_get_cranes_route_rejects_out_of_range_query_params(client):
 def test_get_cranes_route_rejects_reversed_bounds(client):
     response = client.get("/cranes?north=0&south=10&east=10&west=0")
 
-    assert response.status_code == 400
+    assert response.status_code == 422
 
 
 def test_report_crane_as_gone_route_returns_409_for_duplicate(client):

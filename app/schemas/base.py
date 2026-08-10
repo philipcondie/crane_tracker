@@ -30,7 +30,7 @@ class CreateCraneRequest(CraneInput):
 class CranePhotoResponse(BaseApiSchema):
     id: uuid.UUID
     crane_id: uuid.UUID
-    url: str
+    url: str | None
     original_filename: str
     content_type: str
     added_at: datetime

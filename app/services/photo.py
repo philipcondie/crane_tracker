@@ -132,10 +132,6 @@ def ensure_crane_photo_capacity(
 
     crane_exists = session.scalar(crane_query)
     if crane_exists is None:
-        logger.warning(
-            "crane_photo_create_failed",
-            extra={"crane_id": str(crane_id), "reason": "crane_not_found"},
-        )
         raise ResourceNotFoundError(resource="crane", identifier=str(crane_id))
 
     active_photo_count = session.scalar(
@@ -148,16 +144,10 @@ def ensure_crane_photo_capacity(
         )
     )
     if active_photo_count >= MAX_PHOTOS_PER_CRANE:
-        logger.warning(
-            "crane_photo_create_failed",
-            extra={
-                "crane_id": str(crane_id),
-                "active_photo_count": active_photo_count,
-                "reason": "photo_limit_exceeded",
-            },
-        )
         raise PhotoLimitExceededError(
-            f"A crane can have at most {MAX_PHOTOS_PER_CRANE} photos"
+            f"A crane can have at most {MAX_PHOTOS_PER_CRANE} photos",
+            crane_id=crane_id,
+            active_photo_count=active_photo_count,
         )
 
 
@@ -171,42 +161,18 @@ def preupload_crane_photo(
 ) -> tuple[CranePhoto, BytesIO]:
     """Validate the photo and add to database before upload"""
     if content_type not in ALLOWED_PHOTO_TYPES:
-        logger.warning(
-            "crane_photo_create_failed",
-            extra={
-                "crane_id": str(crane_id),
-                "content_type": content_type,
-                "reason": "unsupported_content_type",
-            },
-        )
         raise UnsupportedPhotoTypeError(
             f"Unsupported photo content type: {content_type}"
         )
     if len(filename) > 255:
-        logger.warning(
-            "crane_photo_create_failed",
-            extra={"crane_id": str(crane_id), "reason": "filename_too_long"},
-        )
         raise InvalidPhotoError("Photo filename must be 255 characters or fewer")
 
     file.seek(0, 2)
     file_size = file.tell()
     file.seek(0)
     if file_size == 0:
-        logger.warning(
-            "crane_photo_create_failed",
-            extra={"crane_id": str(crane_id), "reason": "empty_photo"},
-        )
         raise InvalidPhotoError("Photo must not be empty")
     if file_size > MAX_PHOTO_SIZE_BYTES:
-        logger.warning(
-            "crane_photo_create_failed",
-            extra={
-                "crane_id": str(crane_id),
-                "file_size": file_size,
-                "reason": "photo_too_large",
-            },
-        )
         raise PhotoTooLargeError("Photo must be 10 MB or smaller")
 
     prepared_file, stored_content_type, extension = prepare_image(file, content_type)

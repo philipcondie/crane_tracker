@@ -103,7 +103,7 @@ def test_claim_jobs_respects_leases(session, monkeypatch):
 
     # Claim job and set lease
     claim_jobs(session, JobOperation.DELETE, 5)
-    time.sleep(2)
+
     reclaimed_jobs = claim_jobs(
         session=session, operation=JobOperation.DELETE, batch_size=5
     )
@@ -131,10 +131,10 @@ def test_claim_jobs_succeeds_on_expired_lease(session, monkeypatch):
     # Must commit prior transactions to allow claim to work with the func.now()
     session.commit()
 
-    monkeypatch.setattr("app.worker.photo_jobs.LOCK_LEASE_WINDOW", 1)
+    monkeypatch.setattr("app.worker.photo_jobs.LOCK_LEASE_WINDOW", 0.1)
     # Claim job and set lease
     claim_jobs(session, JobOperation.DELETE, 5)
-    time.sleep(2)
+    time.sleep(0.5)
     reclaimed_jobs = claim_jobs(
         session=session, operation=JobOperation.DELETE, batch_size=5
     )
