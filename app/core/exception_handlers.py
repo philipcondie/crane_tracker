@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 def duplicate_crane_error_handler(
     request: Request, exc: exceptions.DuplicateCraneError
 ):
-    logger.warning(
+    logger.exception(
         "duplicate_crane",
         extra={
             "operation": request.scope["route"].name,
@@ -27,7 +27,7 @@ def duplicate_crane_error_handler(
 
 
 def invalid_photo_error_handler(request: Request, exc: exceptions.InvalidPhotoError):
-    logger.warning(
+    logger.exception(
         "invalid_photo",
         extra={
             "operation": request.scope["route"].name,
@@ -41,7 +41,7 @@ def invalid_photo_error_handler(request: Request, exc: exceptions.InvalidPhotoEr
 def photo_limit_exceeded_error_handler(
     request: Request, exc: exceptions.PhotoLimitExceededError
 ):
-    logger.warning(
+    logger.exception(
         "photo_limit_exceeded",
         extra={
             "operation": request.scope["route"].name,
@@ -58,7 +58,7 @@ def photo_limit_exceeded_error_handler(
 def resource_not_found_error_handler(
     request: Request, exc: exceptions.ResourceNotFoundError
 ):
-    logger.warning(
+    logger.exception(
         "resource_not_found",
         extra={
             "operation": request.scope["route"].name,
@@ -75,7 +75,7 @@ def resource_not_found_error_handler(
 def duplicate_gone_report_error_handler(
     request: Request, exc: exceptions.DuplicateGoneReportError
 ):
-    logger.warning(
+    logger.exception(
         "duplicate_gone_report",
         extra={
             "operation": request.scope["route"].name,
