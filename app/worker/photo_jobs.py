@@ -25,11 +25,11 @@ settings = get_settings()
 logger = logging.getLogger(__name__)
 
 JOB_BATCH_SIZE = settings.job_batch_size
-MAX_ATTEMPTS = 5
-MIN_DELAY = 100  # ms
-MAX_DELAY = 4000  # ms
-PENDING_UPLOAD_WINDOW = 5000  # ms
-LOCK_LEASE_WINDOW = 300
+MAX_ATTEMPTS = settings.max_worker_attempts
+MIN_DELAY = settings.min_backoff_delay  # ms
+MAX_DELAY = settings.max_backoff_delay  # ms
+PENDING_UPLOAD_WINDOW = settings.photo_reaper_delay  # ms
+LOCK_LEASE_WINDOW = settings.lock_lease_window  # s
 
 
 @dataclass

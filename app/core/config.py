@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     r2_public_base_url: str | None = None
     job_batch_size: int = 5
     worker_sleep_period: int = 5
+    max_worker_attempts: int = 5
+    min_backoff_delay: int = 1000  # ms
+    max_backoff_delay: int = 60_000  # ms
+    photo_reaper_delay: int = 5000  # ms
+    lock_lease_window: int = 300  # sec
 
     @model_validator(mode="after")
     def validate_r2_configuration(self) -> "Settings":
