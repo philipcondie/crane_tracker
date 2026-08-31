@@ -62,6 +62,8 @@ def upload_photo(
     _, _, _, bucket = _get_r2_config()
     client = _get_s3_client()
 
+    # import time; time.sleep(20)  # TEMP: kill -9 here to orphan a PENDING_UPLOAD row
+
     try:
         client.upload_fileobj(
             file,
