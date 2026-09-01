@@ -48,6 +48,10 @@ ALLOWED_PHOTO_TYPES = {
 }
 
 
+def create_storage_key(crane_id: uuid.UUID, photo_id: uuid.UUID, extension: str):
+    return f"cranes/{crane_id}/photos/{photo_id}{extension}"
+
+
 def prepare_image(
     file: BinaryIO,
     content_type: str,
@@ -179,7 +183,9 @@ def preupload_crane_photo(
 
     ensure_crane_photo_capacity(session=session, crane_id=crane_id, lock_crane=True)
     photo_id = generate_uuid7()
-    storage_key = f"cranes/{crane_id}/photos/{photo_id}{extension}"
+    storage_key = create_storage_key(
+        crane_id=crane_id, photo_id=photo_id, extension=extension
+    )
 
     photo = CranePhoto(
         id=photo_id,

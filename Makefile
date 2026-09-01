@@ -1,4 +1,4 @@
-.PHONY: help lint format clean test
+.PHONY: help lint format clean test test-integration
 
 lint:
 	uv run ruff format .
@@ -12,3 +12,6 @@ format:
 
 test:
 	uv run pytest
+
+test-integration:
+	uv run pytest --integration -m integration

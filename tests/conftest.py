@@ -17,6 +17,15 @@ engine = create_engine(settings.test_database_url)
 TestingSessionLocal = sessionmaker(engine, expire_on_commit=False)
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--integration",
+        action="store_true",
+        default=False,
+        help="run tests against the real R2 dev bucket",
+    )
+
+
 @pytest.fixture(autouse=True)
 def reset_rate_limiter():
     yield
