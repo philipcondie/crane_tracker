@@ -1,4 +1,4 @@
-.PHONY: help lint format clean test test-integration
+.PHONY: help lint format clean test test-integration run
 
 lint:
 	uv run ruff format .
@@ -15,3 +15,6 @@ test:
 
 test-integration:
 	uv run pytest --integration -m integration
+
+run:
+	uv run uvicorn app.main:app --reload

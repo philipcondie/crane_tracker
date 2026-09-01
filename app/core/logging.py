@@ -42,5 +42,7 @@ def configure_logging(level: str = "INFO") -> None:
     logging.getLogger("botocore").setLevel(logging.WARNING)
     logging.getLogger("boto3").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("PIL").setLevel(logging.WARNING)
+    logging.getLogger("s3transfer").setLevel(logging.WARNING)
 
     logging.getLogger(__name__).info("logging configured", extra={"log_level": level})
