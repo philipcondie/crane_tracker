@@ -219,6 +219,6 @@ def get_crane_photos(
         session=session, photo_id=cursor, limit=limit
     )
     return PhotoListResponse(
-        photos=[serialize_crane_photo(photo) for photo in photos],
-        end=True if len(photos) < limit else False,
+        photos=[serialize_crane_photo(photo) for photo in photos[:limit]],
+        end=False if len(photos) > limit else True,
     )

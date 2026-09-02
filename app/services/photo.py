@@ -304,7 +304,8 @@ def get_crane_photos(
     query = (
         select(CranePhoto)
         .where(CranePhoto.status != CranePhotoStatus.PENDING_DELETE)
-        .limit(limit)
+        .order_by(CranePhoto.id.desc())
+        .limit(limit + 1)
     )
     if photo_id:
         query = query.where(CranePhoto.id < photo_id)
