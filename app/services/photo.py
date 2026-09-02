@@ -1,6 +1,7 @@
 import logging
 import uuid
 import warnings
+from collections.abc import Sequence
 from io import BytesIO
 from typing import BinaryIO
 
@@ -293,3 +294,19 @@ def delete_crane_photo(
         raise ResourceNotFoundError(resource="photo", identifier=str(photo_id))
 
     create_delete_crane_job(session=session, photo=photo)
+
+
+def get_crane_photos(
+    session: Session, *, photo_id: uuid.UUID | None = None, limit: int = 50
+) -> Sequence[CranePhoto]:
+    # do reverse chronological to avoid scrolling through vetted photos
+    # sort on uuid7
+    query = (
+        select(CranePhoto)
+        .where(CranePhoto.status != CranePhotoStatus.PENDING_DELETE)
+        .limit(limit)
+    )
+    if photo_id:
+        query = query.where(CranePhoto.id < photo_id)
+
+    return session.scalars(query).all()

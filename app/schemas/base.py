@@ -57,3 +57,8 @@ class CraneDetail(CraneSummary):
 class CraneListResponse(BaseApiSchema):
     cranes: list[CraneSummary]
     truncated: bool
+
+
+class PhotoListResponse(BaseApiSchema):
+    photos: list[CranePhotoResponse]
+    end: bool

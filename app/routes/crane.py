@@ -24,6 +24,7 @@ from app.schemas.base import (
     CranePhotoResponse,
     CraneSummary,
     CreateCraneRequest,
+    PhotoListResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -207,4 +208,17 @@ def delete_crane_photo(
     logger.info(
         "crane_photo_delete_job_added",
         extra={"crane_id": str(crane_id), "photo_id": str(photo_id)},
+    )
+
+
+@crane_router.get("/photos", response_model=list[CranePhotoResponse])
+def get_crane_photos(
+    session: SessionDep, cursor: uuid.UUID | None = None, limit: int = 50
+):
+    photos = photo_service.get_crane_photos(
+        session=session, photo_id=cursor, limit=limit
+    )
+    return PhotoListResponse(
+        photos=[serialize_crane_photo(photo) for photo in photos],
+        end=True if len(photos) < limit else False,
     )
