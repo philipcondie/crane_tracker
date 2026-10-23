@@ -1,7 +1,7 @@
 from functools import lru_cache
 from urllib.parse import urlparse
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     gone_report_threshold: int = 3
     ip_hash_salt: str
     create_rate_limit: str = "5/hr"
+    photo_report_rate_limit: str = "10/hour"
+    admin_login_rate_limit: str = "5/minute"
+    admin_token_ttl_seconds: int = Field(default=3600, ge=60, le=86400)
     r2_endpoint_url: str | None = None
     r2_access_key_id: str | None = None
     r2_secret_access_key: str | None = None

@@ -4,7 +4,9 @@ from datetime import datetime
 
 from geoalchemy2 import Geometry, WKBElement
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
+    DateTime,
     Enum,
     Float,
     ForeignKey,
@@ -156,3 +158,41 @@ class OutboxJob(Base):
     last_error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class AdminUser(Base):
+    __tablename__ = "admin_user"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, primary_key=True, default=generate_uuid7
+    )
+    username: Mapped[str] = mapped_column(String(255), unique=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+class AdminToken(Base):
+    __tablename__ = "admin_token"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("admin_user.id", ondelete="CASCADE"), index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class PhotoReport(Base):
+    __tablename__ = "photo_report"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, primary_key=True, default=generate_uuid7
+    )
+    photo_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("crane_photo.id", ondelete="CASCADE"), index=True
+    )
+    reporter_ip_hash: Mapped[str] = mapped_column(String(64))
+    added_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("photo_id", "reporter_ip_hash", name="photo_reporter"),
+    )

@@ -23,6 +23,7 @@ from app.core.exceptions import (
 )
 from app.core.limiter import limiter
 from app.core.logging import configure_logging
+from app.routes.auth import router as auth_router
 from app.routes.crane import crane_router
 from app.routes.health import health_router
 
@@ -34,7 +35,9 @@ configure_logging(level=log_level)
 
 origins = settings.cors_origins
 methods = (
-    ["*"] if settings.environment.lower() == "dev" else ["GET", "PUT", "POST", "DELETE"]
+    ["*"]
+    if settings.environment.lower() in ("dev", "development")
+    else ["GET", "PUT", "POST", "DELETE"]
 )
 
 app = FastAPI()
@@ -77,5 +80,6 @@ app.add_exception_handler(
     sql_alchemy_error_handler,  # pyright: ignore[reportArgumentType]
 )
 
+app.include_router(auth_router)
 app.include_router(crane_router)
 app.include_router(health_router)

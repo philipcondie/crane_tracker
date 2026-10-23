@@ -59,6 +59,10 @@ class CraneListResponse(BaseApiSchema):
     truncated: bool
 
 
+class AdminPhotoResponse(CranePhotoResponse):
+    report_count: int
+
+
 class PhotoListResponse(BaseApiSchema):
-    photos: list[CranePhotoResponse]
+    photos: list[AdminPhotoResponse]
     end: bool

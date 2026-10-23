@@ -48,7 +48,7 @@ services:
     build: .
     env_file: .env.prod
     restart: unless-stopped
-    command: uv run python -m app.worker
+    command: uv run python -m app.worker.main
     logging:
       driver: json-file
       options:

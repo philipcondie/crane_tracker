@@ -9,7 +9,7 @@ import app.services.crane as crane_service
 import app.services.photo as photo_service
 import app.services.storage as storage_service
 from app.core.config import get_settings
-from app.core.dependencies import SessionDep
+from app.core.dependencies import AdminDep, SessionDep
 from app.core.exceptions import (
     InvalidCoordinateError,
     PhotoStorageError,
@@ -18,6 +18,7 @@ from app.core.exceptions import (
 from app.core.limiter import limiter
 from app.models.base import CranePhoto
 from app.schemas.base import (
+    AdminPhotoResponse,
     CraneDetail,
     CraneInput,
     CraneListResponse,
@@ -64,6 +65,32 @@ def create_crane(
     session.commit()
     logger.info("crane_created", extra={"crane_id": str(crane.id)})
     return crane
+
+
+@crane_router.get("/photos", response_model=PhotoListResponse)
+def get_crane_photos(
+    session: SessionDep,
+    admin: AdminDep,
+    cursor: uuid.UUID | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+    reported_only: bool = False,
+):
+    photos = photo_service.get_crane_photos(
+        session=session, photo_id=cursor, limit=limit, reported_only=reported_only
+    )
+    report_counts = photo_service.get_photo_report_counts(
+        session, photo_ids=[photo.id for photo in photos[:limit]]
+    )
+    return PhotoListResponse(
+        photos=[
+            AdminPhotoResponse(
+                **serialize_crane_photo(photo).model_dump(),
+                report_count=report_counts.get(photo.id, 0),
+            )
+            for photo in photos[:limit]
+        ],
+        end=False if len(photos) > limit else True,
+    )
 
 
 @crane_router.get("/{crane_id}", response_model=CraneDetail)
@@ -196,6 +223,7 @@ def upload_crane_photo(
 )
 def delete_crane_photo(
     session: SessionDep,
+    admin: AdminDep,
     crane_id: uuid.UUID,
     photo_id: uuid.UUID,
 ):
@@ -207,18 +235,33 @@ def delete_crane_photo(
     session.commit()
     logger.info(
         "crane_photo_delete_job_added",
-        extra={"crane_id": str(crane_id), "photo_id": str(photo_id)},
+        extra={
+            "crane_id": str(crane_id),
+            "photo_id": str(photo_id),
+            "admin_id": str(admin.id),
+        },
     )
 
 
-@crane_router.get("/photos", response_model=list[CranePhotoResponse])
-def get_crane_photos(
-    session: SessionDep, cursor: uuid.UUID | None = None, limit: int = 50
+@crane_router.post(
+    "/{crane_id}/photos/{photo_id}/report", status_code=status.HTTP_201_CREATED
+)
+@limiter.limit(settings.photo_report_rate_limit)
+def report_crane_photo(
+    request: Request, session: SessionDep, crane_id: uuid.UUID, photo_id: uuid.UUID
 ):
-    photos = photo_service.get_crane_photos(
-        session=session, photo_id=cursor, limit=limit
+    client_ip = request.client.host if request.client else None
+    if client_ip is None:
+        raise HTTPException(
+            status_code=400, detail="Could not identify host to record report"
+        )
+    created = photo_service.report_crane_photo(
+        session, crane_id=crane_id, photo_id=photo_id, client_ip=client_ip
     )
-    return PhotoListResponse(
-        photos=[serialize_crane_photo(photo) for photo in photos[:limit]],
-        end=False if len(photos) > limit else True,
-    )
+    if not created:
+        raise HTTPException(
+            status_code=409, detail="Photo already reported from this IP"
+        )
+    session.commit()
+    logger.info("photo_report_created", extra={"photo_id": str(photo_id)})
+    return {"detail": "Photo reported for admin review"}

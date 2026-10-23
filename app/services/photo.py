@@ -8,6 +8,7 @@ from typing import BinaryIO
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pillow_heif import register_heif_opener
 from sqlalchemy import func, or_, select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 import app.services.job as job_service
@@ -25,8 +26,10 @@ from app.models.base import (
     CranePhoto,
     CranePhotoStatus,
     JobOperation,
+    PhotoReport,
     generate_uuid7,
 )
+from app.services.crane import hash_ip
 
 logger = logging.getLogger(__name__)
 
@@ -283,11 +286,13 @@ def delete_crane_photo(
     photo_id: uuid.UUID,
 ) -> None:
     photo = session.scalar(
-        select(CranePhoto).where(
+        select(CranePhoto)
+        .where(
             CranePhoto.id == photo_id,
             CranePhoto.crane_id == crane_id,
             CranePhoto.status == CranePhotoStatus.ACTIVE,
         )
+        .with_for_update()
     )
 
     if photo is None:
@@ -297,17 +302,61 @@ def delete_crane_photo(
 
 
 def get_crane_photos(
-    session: Session, *, photo_id: uuid.UUID | None = None, limit: int = 50
+    session: Session,
+    *,
+    photo_id: uuid.UUID | None = None,
+    limit: int = 50,
+    reported_only: bool = False,
 ) -> Sequence[CranePhoto]:
     # do reverse chronological to avoid scrolling through vetted photos
     # sort on uuid7
     query = (
         select(CranePhoto)
-        .where(CranePhoto.status != CranePhotoStatus.PENDING_DELETE)
+        .where(CranePhoto.status == CranePhotoStatus.ACTIVE)
         .order_by(CranePhoto.id.desc())
         .limit(limit + 1)
     )
+    if reported_only:
+        query = query.where(
+            select(PhotoReport.id).where(PhotoReport.photo_id == CranePhoto.id).exists()
+        )
     if photo_id:
         query = query.where(CranePhoto.id < photo_id)
 
     return session.scalars(query).all()
+
+
+def report_crane_photo(
+    session: Session, *, crane_id: uuid.UUID, photo_id: uuid.UUID, client_ip: str
+) -> bool:
+    photo = session.scalar(
+        select(CranePhoto)
+        .where(
+            CranePhoto.id == photo_id,
+            CranePhoto.crane_id == crane_id,
+            CranePhoto.status == CranePhotoStatus.ACTIVE,
+        )
+        .with_for_update()
+    )
+    if photo is None:
+        raise ResourceNotFoundError(resource="photo", identifier=str(photo_id))
+    report_id = session.scalar(
+        insert(PhotoReport)
+        .values(photo_id=photo_id, reporter_ip_hash=hash_ip(client_ip))
+        .on_conflict_do_nothing(constraint="photo_reporter")
+        .returning(PhotoReport.id)
+    )
+    return report_id is not None
+
+
+def get_photo_report_counts(
+    session: Session, *, photo_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, int]:
+    if not photo_ids:
+        return {}
+    rows = session.execute(
+        select(PhotoReport.photo_id, func.count(PhotoReport.id))
+        .where(PhotoReport.photo_id.in_(photo_ids))
+        .group_by(PhotoReport.photo_id)
+    )
+    return dict(rows.all())
