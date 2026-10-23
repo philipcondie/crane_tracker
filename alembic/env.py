@@ -1,5 +1,6 @@
 from logging.config import fileConfig
 
+from geoalchemy2 import alembic_helpers
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
@@ -59,6 +60,26 @@ target_metadata = Base.metadata
 # ... etc.
 
 
+def include_object(obj, name, obj_type, reflected, compare_to) -> bool:
+    """Keep autogenerate focused on tables this project actually owns.
+
+    PostGIS installs its own tables and views (``spatial_ref_sys``,
+    ``geometry_columns``, ...) into the database. Autogenerate reflects them,
+    finds no match in ``Base.metadata``, and proposes dropping them -- which
+    would break every spatial query. Skipping reflected tables we do not
+    declare covers PostGIS and any extension added later, at the cost of never
+    auto-generating a drop for a table removed from the models; write those by
+    hand.
+
+    Anything that survives the filter is delegated to GeoAlchemy2, which knows
+    to ignore the spatial indexes and geometry columns PostGIS manages itself.
+    """
+    if obj_type == "table" and reflected and name not in target_metadata.tables:
+        return False
+
+    return alembic_helpers.include_object(obj, name, obj_type, reflected, compare_to)
+
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
 
@@ -77,6 +98,8 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=include_object,
+        render_item=alembic_helpers.render_item,
     )
 
     with context.begin_transaction():
@@ -98,7 +121,10 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection,
+            target_metadata=target_metadata,
+            include_object=include_object,
+            render_item=alembic_helpers.render_item,
         )
 
         with context.begin_transaction():

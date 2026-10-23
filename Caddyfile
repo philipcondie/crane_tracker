@@ -1,4 +1,8 @@
 crane-api.philcondie.com {
+    request_body {
+        max_size 11MB
+    }
+
     reverse_proxy app:8000
 
     header {

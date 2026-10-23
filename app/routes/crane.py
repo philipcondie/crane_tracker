@@ -1,28 +1,49 @@
+import logging
 import uuid
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile, status
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 import app.services.crane as crane_service
+import app.services.photo as photo_service
+import app.services.storage as storage_service
 from app.core.config import get_settings
-from app.core.dependencies import SessionDep
+from app.core.dependencies import AdminDep, SessionDep
 from app.core.exceptions import (
-    DuplicateCraneError,
-    DuplicateGoneReportError,
     InvalidCoordinateError,
-    ResourceNotFoundError,
+    PhotoStorageError,
+    PhotoUploadRaceError,
 )
 from app.core.limiter import limiter
+from app.models.base import CranePhoto
 from app.schemas.base import (
+    AdminPhotoResponse,
     CraneDetail,
     CraneInput,
     CraneListResponse,
+    CranePhotoResponse,
     CraneSummary,
     CreateCraneRequest,
+    PhotoListResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
 crane_router = APIRouter(prefix="/cranes")
+
+
+def serialize_crane_photo(photo: CranePhoto) -> CranePhotoResponse:
+    return CranePhotoResponse(
+        id=photo.id,
+        crane_id=photo.crane_id,
+        url=storage_service.get_public_url(object_key=photo.storage_key),
+        original_filename=photo.original_filename,
+        content_type=photo.content_type,
+        added_at=photo.added_at,
+    )
 
 
 @crane_router.post("", response_model=CraneSummary, status_code=status.HTTP_201_CREATED)
@@ -35,25 +56,52 @@ def create_crane(
         lng=create_request.lng,
         project_name=create_request.project_name,
     )
-    try:
-        crane = crane_service.create_crane(
-            session=session,
-            input=crane_input,
-            override_duplicate_warning=create_request.override_duplicate_warning,
-        )
-    except DuplicateCraneError as e:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+
+    crane = crane_service.create_crane(
+        session=session,
+        input=crane_input,
+        override_duplicate_warning=create_request.override_duplicate_warning,
+    )
     session.commit()
+    logger.info("crane_created", extra={"crane_id": str(crane.id)})
     return crane
+
+
+@crane_router.get("/photos", response_model=PhotoListResponse)
+def get_crane_photos(
+    session: SessionDep,
+    admin: AdminDep,
+    cursor: uuid.UUID | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+    reported_only: bool = False,
+):
+    photos = photo_service.get_crane_photos(
+        session=session, photo_id=cursor, limit=limit, reported_only=reported_only
+    )
+    report_counts = photo_service.get_photo_report_counts(
+        session, photo_ids=[photo.id for photo in photos[:limit]]
+    )
+    return PhotoListResponse(
+        photos=[
+            AdminPhotoResponse(
+                **serialize_crane_photo(photo).model_dump(),
+                report_count=report_counts.get(photo.id, 0),
+            )
+            for photo in photos[:limit]
+        ],
+        end=False if len(photos) > limit else True,
+    )
 
 
 @crane_router.get("/{crane_id}", response_model=CraneDetail)
 def get_crane(session: SessionDep, crane_id: uuid.UUID):
-    try:
-        crane = crane_service.get_crane(session=session, id=crane_id)
-    except ResourceNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    return crane
+    crane = crane_service.get_crane(session=session, id=crane_id)
+    photo_items = [serialize_crane_photo(photo) for photo in crane.photo_records]
+
+    detail = CraneDetail.model_validate(crane)
+    detail.photos = len(crane.photo_records)
+    detail.photo_items = photo_items
+    return detail
 
 
 @crane_router.get("", response_model=CraneListResponse)
@@ -69,7 +117,9 @@ def get_cranes(
             session=session, north=north, south=south, east=east, west=west
         )
     except InvalidCoordinateError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(e)
+        )
     return cranes
 
 
@@ -83,14 +133,135 @@ def report_crane_as_gone(session: SessionDep, crane_id: uuid.UUID, request: Requ
             detail="could not identify host to record report",
         )
 
+    crane_service.report_crane_as_gone(
+        session=session, crane_id=crane_id, client_ip=client_ip
+    )
+    session.commit()
+
+
+def _abandon_helper(session: Session, photo_id: uuid.UUID, crane_id: uuid.UUID):
     try:
-        crane_service.report_crane_as_gone(
-            session=session, crane_id=crane_id, client_ip=client_ip
-        )
+        photo_service.abandon_crane_photo_upload(session=session, photo_id=photo_id)
         session.commit()
-    except ResourceNotFoundError as e:
+        logger.info(
+            "crane_photo_delete_job_added",
+            extra={"crane_id": str(crane_id), "photo_id": str(photo_id)},
+        )
+    except Exception:
         session.rollback()
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    except DuplicateGoneReportError as e:
-        session.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+        logger.exception(
+            "crane_photo_upload_abandon_failed",
+            extra={"crane_id": str(crane_id), "photo_id": str(photo_id)},
+        )
+
+
+@crane_router.post(
+    "/{crane_id}/photos",
+    response_model=CranePhotoResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+@limiter.limit(settings.create_rate_limit)
+def upload_crane_photo(
+    request: Request,
+    session: SessionDep,
+    crane_id: uuid.UUID,
+    photo: UploadFile = File(...),
+):
+    crane_photo = None
+    photo_id = None
+    try:
+        crane_photo, prepared_file = photo_service.preupload_crane_photo(
+            session=session,
+            crane_id=crane_id,
+            file=photo.file,
+            filename=photo.filename or "photo",
+            content_type=photo.content_type or "application/octet-stream",
+        )
+        photo_id = crane_photo.id
+        storage_key = crane_photo.storage_key
+        content_type = crane_photo.content_type
+        session.commit()  # required to close out transaction before next steps
+
+        try:
+            photo_service.upload_crane_photo_to_storage(
+                photo_id=photo_id,
+                crane_id=crane_id,
+                storage_key=storage_key,
+                content_type=content_type,
+                file=prepared_file,
+            )
+
+            crane_photo = photo_service.finalize_crane_photo(
+                session=session,
+                photo_id=photo_id,
+            )
+            session.commit()
+
+        except (PhotoStorageError, PhotoUploadRaceError) as e:
+            session.rollback()
+            _abandon_helper(session=session, photo_id=photo_id, crane_id=crane_id)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(e),
+            )
+        except SQLAlchemyError:
+            session.rollback()
+            _abandon_helper(session=session, photo_id=photo_id, crane_id=crane_id)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Photo could not be saved",
+            )
+    finally:
+        photo.file.close()
+
+    return serialize_crane_photo(crane_photo)
+
+
+@crane_router.delete(
+    "/{crane_id}/photos/{photo_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_crane_photo(
+    session: SessionDep,
+    admin: AdminDep,
+    crane_id: uuid.UUID,
+    photo_id: uuid.UUID,
+):
+    photo_service.delete_crane_photo(
+        session=session,
+        crane_id=crane_id,
+        photo_id=photo_id,
+    )
+    session.commit()
+    logger.info(
+        "crane_photo_delete_job_added",
+        extra={
+            "crane_id": str(crane_id),
+            "photo_id": str(photo_id),
+            "admin_id": str(admin.id),
+        },
+    )
+
+
+@crane_router.post(
+    "/{crane_id}/photos/{photo_id}/report", status_code=status.HTTP_201_CREATED
+)
+@limiter.limit(settings.photo_report_rate_limit)
+def report_crane_photo(
+    request: Request, session: SessionDep, crane_id: uuid.UUID, photo_id: uuid.UUID
+):
+    client_ip = request.client.host if request.client else None
+    if client_ip is None:
+        raise HTTPException(
+            status_code=400, detail="Could not identify host to record report"
+        )
+    created = photo_service.report_crane_photo(
+        session, crane_id=crane_id, photo_id=photo_id, client_ip=client_ip
+    )
+    if not created:
+        raise HTTPException(
+            status_code=409, detail="Photo already reported from this IP"
+        )
+    session.commit()
+    logger.info("photo_report_created", extra={"photo_id": str(photo_id)})
+    return {"detail": "Photo reported for admin review"}

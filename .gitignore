@@ -18,3 +18,5 @@ wheels/
 AGENTS.md
 notes.md
 docs/
+.env.test
+.DS_Store

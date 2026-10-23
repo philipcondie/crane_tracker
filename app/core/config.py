@@ -1,6 +1,13 @@
 from functools import lru_cache
+from urllib.parse import urlparse
 
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
+
+
+def _is_valid_url(value: str) -> bool:
+    parsed = urlparse(value)
+    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
 
 
 class Settings(BaseSettings):
@@ -12,6 +19,52 @@ class Settings(BaseSettings):
     gone_report_threshold: int = 3
     ip_hash_salt: str
     create_rate_limit: str = "5/hr"
+    photo_report_rate_limit: str = "10/hour"
+    admin_login_rate_limit: str = "5/minute"
+    admin_token_ttl_seconds: int = Field(default=3600, ge=60, le=86400)
+    r2_endpoint_url: str | None = None
+    r2_access_key_id: str | None = None
+    r2_secret_access_key: str | None = None
+    r2_bucket_name: str | None = None
+    r2_public_base_url: str | None = None
+    job_batch_size: int = 5
+    worker_sleep_period: int = 5
+    max_worker_attempts: int = 5
+    min_backoff_delay: int = 1000  # ms
+    max_backoff_delay: int = 60_000  # ms
+    photo_reaper_delay: int = 5000  # ms
+    lock_lease_window: int = 300  # sec
+
+    @model_validator(mode="after")
+    def validate_r2_configuration(self) -> "Settings":
+        values = {
+            "R2_ENDPOINT_URL": self.r2_endpoint_url,
+            "R2_ACCESS_KEY_ID": self.r2_access_key_id,
+            "R2_SECRET_ACCESS_KEY": self.r2_secret_access_key,
+            "R2_BUCKET_NAME": self.r2_bucket_name,
+            "R2_PUBLIC_BASE_URL": self.r2_public_base_url,
+        }
+        missing = [name for name, value in values.items() if not value]
+        deployed = self.environment.lower() in ("staging", "production")
+        partially_configured = bool(any(values.values()) and missing)
+        if (deployed and missing) or partially_configured:
+            raise ValueError(
+                f"{self.environment} requires complete R2 configuration when "
+                f"photo storage is enabled; "
+                f"missing: {', '.join(missing)}"
+            )
+
+        malformed = [
+            name
+            for name in ("R2_ENDPOINT_URL", "R2_PUBLIC_BASE_URL")
+            if values[name] and not _is_valid_url(values[name])
+        ]
+        if malformed:
+            raise ValueError(
+                f"R2 configuration requires absolute http(s) URLs; "
+                f"malformed: {', '.join(malformed)}"
+            )
+        return self
 
 
 @lru_cache

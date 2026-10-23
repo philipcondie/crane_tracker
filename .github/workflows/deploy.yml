@@ -39,7 +39,7 @@ jobs:
           ssh "$SERVER" "cd $REMOTE_PATH && git pull && \
             docker compose -f $COMPOSE_FILE build && \
             docker compose -f $COMPOSE_FILE run --rm migrate && \
-            docker compose -f $COMPOSE_FILE up -d --remove-orphans app && \
+            docker compose -f $COMPOSE_FILE up -d --remove-orphans app worker && \
             docker compose -f $COMPOSE_FILE exec -T caddy caddy reload --config /etc/caddy/Caddyfile"
 
       - name: Health check
